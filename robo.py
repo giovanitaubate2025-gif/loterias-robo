@@ -276,8 +276,13 @@ def executar_robo():
                 matriz_dezenas = []
                 
                 if historico_completo_db:
-                    for k, v in historico_completo_db.items():
-                        if 'dezenas' in v: matriz_dezenas.append(v['dezenas'])
+                    # CORREÇÃO: Trata se o Firebase retornou Lista ou Dicionário
+                    if isinstance(historico_completo_db, dict):
+                        for k, v in historico_completo_db.items():
+                            if v and 'dezenas' in v: matriz_dezenas.append(v['dezenas'])
+                    elif isinstance(historico_completo_db, list):
+                        for v in historico_completo_db:
+                            if v and 'dezenas' in v: matriz_dezenas.append(v['dezenas'])
                 
                 if not matriz_dezenas: matriz_dezenas = [res_atual["dezenas"]]
 
