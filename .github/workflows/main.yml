@@ -1,22 +1,25 @@
-name: Trator Lotofacil
+name: Loterias Robo Auto
+
 on:
-  workflow_dispatch: 
+  workflow_dispatch: # Permite correr manualmente
   schedule:
-    - cron: '0 23 * * 1-6' 
+    - cron: '*/5 * * * *' # Tenta correr a cada 5 minutos
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Instalar Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
+
       - name: Instalar Bibliotecas
-        run: pip install requests urllib3
-        
-      - name: Rodar o Robo Agora
+        run: pip install firebase-admin requests urllib3
+
+      - name: Rodar o Robo
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: python robo.py
