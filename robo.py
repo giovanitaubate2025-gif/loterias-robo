@@ -6,12 +6,11 @@ import urllib3
 # Desativa avisos de segurança da Caixa
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# O LINK DA SUA PLANILHA JÁ ESTÁ AQUI:
-URL_PLANILHA = "https://script.google.com/macros/s/AKfycbzk15BvwYSZ4Js9PgMILNOzJdnkEyAyEzqC11Gq3N7G4B-td-YQLdyjuEnlMbdEFKTbPw/exec"
+# O SEU NOVO LINK DA PLANILHA JÁ ESTÁ AQUI:
+URL_PLANILHA = "https://script.google.com/macros/s/AKfycbw8pc9Dh-aVqNJ2KmycFAy3xyMj_2bshtDovNOVV-99CO8t5v_sY0IUbshu23Ysbl15xQ/exec"
 
 def perguntar_para_planilha():
     try:
-        # Pergunta para a planilha qual é o último concurso que ela tem (via GET)
         res = requests.get(URL_PLANILHA, timeout=10)
         if res.status_code == 200:
             dados = res.json()
@@ -38,21 +37,31 @@ def formatar_concurso(dados):
     if dados.get('listaRateioPremio') and len(dados['listaRateioPremio']) > 0:
         ganhadores = dados['listaRateioPremio'][0].get('numeroDeGanhadores', 0)
 
+    # CIRÚRGICO: Pega as dezenas brutas
+    dezenas_brutas = dados.get('listaDezenas', [])
+    
+    # CIRÚRGICO: Converte para número inteiro para poder ordenar corretamente
+    dezenas_numeros = [int(n) for n in dezenas_brutas if str(n).strip() != ""]
+    
+    # CIRÚRGICO: Ordena do menor para o maior (Crescente)
+    dezenas_numeros.sort()
+    
+    # CIRÚRGICO: Transforma de volta em texto com 2 dígitos (ex: "5" vira "05")
+    bolas_organizadas = [str(n).zfill(2) for n in dezenas_numeros]
+
     return {
         "concurso": int(dados['numero']),
         "data": dados.get('dataApuracao', ''),
-        "bolas": [str(n).zfill(2) for n in dados.get('listaDezenas', [])],
+        "bolas": bolas_organizadas, # Bolas 100% em ordem crescente
         "ganhadores": ganhadores
     }
 
 def executar():
-    print("🚜 INICIANDO O TRATOR DA LOTOFÁCIL...")
+    print("🚜 INICIANDO O TRATOR CIRÚRGICO DA LOTOFÁCIL...")
     
-    # 1. Pergunta onde parou
     ultimo_planilha = perguntar_para_planilha()
     if ultimo_planilha == -1: return
 
-    # 2. Vê onde a Caixa está
     dados_atuais = buscar_caixa()
     if not dados_atuais or 'numero' not in dados_atuais:
         print("⚠️ A Caixa não respondeu. Tentaremos depois.")
@@ -65,21 +74,19 @@ def executar():
         print("✅ A Planilha já está 100% atualizada!")
         return
 
-    # 3. Baixa o que falta
     faltam = concurso_caixa - ultimo_planilha
-    print(f"⬇️ Faltam {faltam} concursos. Iniciando o download...")
+    print(f"⬇️ Faltam {faltam} concursos. Iniciando o download ordenado...")
     
     lote = []
-    # Loop do próximo concurso que a planilha precisa até o último da caixa
+    
     for num in range(ultimo_planilha + 1, concurso_caixa + 1):
-        # Se for o último, aproveita o que já baixamos lá em cima
         dados_brutos = buscar_caixa(num) if num != concurso_caixa else dados_atuais
         
         concurso_formatado = formatar_concurso(dados_brutos)
         if concurso_formatado:
             lote.append(concurso_formatado)
             
-        # Quando o pacote tiver 50 resultados, manda pra planilha (ou se for o último que faltava)
+        # Envia em lotes de 50 para a planilha organizar e inserir
         if len(lote) == 50 or num == concurso_caixa:
             print(f"🚀 Enviando lote de {len(lote)} concursos para a Planilha...")
             try:
@@ -91,13 +98,12 @@ def executar():
             except Exception as e:
                 print(f"❌ Falha de conexão com a planilha ao enviar lote: {e}")
             
-            # Limpa o pacote para os próximos 50
             lote = []
-            time.sleep(1) # Pausa pra não travar a caixa
+            time.sleep(1) 
             
-        time.sleep(0.1) # Respira entre um download e outro
+        time.sleep(0.1)
 
-    print("\n🏁 TRABALHO CONCLUÍDO! A Planilha está atualizada.")
+    print("\n🏁 TRABALHO CONCLUÍDO! A Planilha está atualizada e organizada.")
 
 if __name__ == "__main__":
     executar()
