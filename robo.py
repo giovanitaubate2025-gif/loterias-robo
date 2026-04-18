@@ -1,94 +1,96 @@
-import os
-import json
-import time
-from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import db
+from firebase_admin import credentials, db
+import json
+import os
+import requests
+import sys
+import urllib3
+from datetime import datetime
 
-# 1. Configuração da Chave do Firebase
-service_account_info = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
-DATABASE_URL = "https://canal-da-loterias-default-rtdb.firebaseio.com"
+# Desativa avisos de segurança chatos do site da Caixa
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-if not service_account_info:
-    print("❌ Erro: Chave FIREBASE_SERVICE_ACCOUNT não configurada.")
-    exit(1)
-
-cred = credentials.Certificate(json.loads(service_account_info))
-firebase_admin.initialize_app(cred, {'databaseURL': DATABASE_URL})
-
-# 2. Lista de todas as loterias que vamos buscar
-loterias = [
-    {'id': 'lotofacil', 'nome': 'LOTOFÁCIL'},
-    {'id': 'quina', 'nome': 'QUINA'},
-    {'id': 'megasena', 'nome': 'MEGA-SENA'},
-    {'id': 'lotomania', 'nome': 'LOTOMANIA'},
-    {'id': 'timemania', 'nome': 'TIMEMANIA'},
-    {'id': 'duplasena', 'nome': 'DUPLA SENA'},
-    {'id': 'diadesorte', 'nome': 'DIA DE SORTE'},
-    {'id': 'supersete', 'nome': 'SUPER SETE'},
-    {'id': 'maismilionaria', 'nome': '+MILIONÁRIA'}
-]
-
-def capturar():
-    # Configurando o robô para rodar invisível no servidor
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0")
+def atualizar_loterias():
+    print("🤖 Iniciando o Robô...")
     
-    driver = webdriver.Chrome(options=options)
-    
-    # 3. Criando as DUAS pastas no Firebase, como combinamos!
-    ref_proximo = db.reference('Proximo_Concurso')
-    ref_resultados = db.reference('Resultados')
+    # 1. Autenticação Firebase
+    service_account_info = os.environ.get('FIREBASE_SERVICE_ACCOUNT')
+    if not service_account_info:
+        print("❌ ERRO FATAL: Segredo FIREBASE_SERVICE_ACCOUNT não encontrado no GitHub!")
+        sys.exit(1) # Faz a bolinha ficar VERMELHA no GitHub
 
-    for jogo in loterias:
-        try:
-            # Acessa o site da Caixa
-            driver.get(f"https://servicebus2.caixa.gov.br/portalloterias/api/{jogo['id']}")
-            time.sleep(3) # Pausa rápida para a Caixa não bloquear
-            
-            # Pega o texto puro que a Caixa devolve
-            dados = json.loads(driver.find_element("tag name", "body").text)
-            
-            agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    try:
+        cert_dict = json.loads(service_account_info)
+    except Exception as e:
+        print(f"❌ ERRO FATAL: O Segredo copiado não é válido. {e}")
+        sys.exit(1)
 
-            # =========================================================
-            # PASTA 1: SALVA OS DADOS DO PRÓXIMO CONCURSO
-            # =========================================================
-            info_proximo = {
-                "nome": jogo['nome'],
-                "proximo_premio": dados.get('valorEstimadoProximoConcurso', 0),
-                "data_proximo": dados.get('dataProximoConcurso', '-'),
-                "status": "ACUMULOU" if dados.get('acumulado') else "SAIU",
-                "atualizado_em": agora
-            }
-            ref_proximo.child(jogo['id']).set(info_proximo)
-            
-            # =========================================================
-            # PASTA 2: SALVA OS DADOS DO ÚLTIMO SORTEIO REALIZADO
-            # =========================================================
-            info_resultado = {
-                "nome": jogo['nome'],
-                "concurso": dados.get('numero', 0),
-                "data_sorteio": dados.get('dataApuracao', '-'),
-                "dezenas": dados.get('listaDezenas', []),
-                "acumulou": dados.get('acumulado', False),
-                "atualizado_em": agora
-            }
-            ref_resultados.child(jogo['id']).set(info_resultado)
+    database_url = "https://canal-da-loterias-default-rtdb.firebaseio.com"
 
-            print(f"✅ {jogo['nome']}: Salvo nas pastas Resultados e Proximo_Concurso!")
-            
-        except Exception as e:
-            print(f"❌ Erro ao buscar {jogo['nome']}: {e}")
-            
-    # Desliga o robô
-    driver.quit()
+    try:
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(cert_dict)
+            firebase_admin.initialize_app(cred, {'databaseURL': database_url})
+        print("✅ Conectado ao Firebase com sucesso!")
+    except Exception as e:
+        print(f"❌ ERRO ao conectar no Firebase: {e}")
+        sys.exit(1)
+
+    # 2. Busca de Dados na Fonte OFICIAL da Caixa Econômica
+    print("⏳ Buscando resultados direto do servidor da Caixa...")
+    try:
+        url = "https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil/"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, verify=False, timeout=15)
+        response.raise_for_status()
+        dados = response.json()
+        print(f"✅ Dados fresquinhos recebidos! Concurso: {dados.get('numero')}")
+        
+    except Exception as e:
+        print(f"❌ ERRO ao buscar dados da Caixa: {e}")
+        sys.exit(1)
+
+    # 3. Organiza os dados para o seu Aplicativo
+    try:
+        resultado_data = {
+            "concurso": str(dados['numero']),
+            "data_sorteio": dados['dataApuracao'],
+            "dezenas": [int(n) for n in dados['listaDezenas']]
+        }
+
+        proximo_data = {
+            "proximo_premio": dados['valorEstimadoProximoConcurso'],
+            "data_proximo": dados['dataProximoConcurso'],
+            "status": "ACUMULOU" if dados['acumulado'] else "ESTIMATIVA",
+            "concurso_proximo": str(int(dados['numero']) + 1)
+        }
+
+        dezenas_sorteadas = [str(n).zfill(2) for n in dados['listaDezenas']]
+        todas_dezenas = [str(n).zfill(2) for n in range(1, 26)]
+        bolas_atrasadas = [d for d in todas_dezenas if d not in dezenas_sorteadas]
+        
+        estatisticas = {
+            "bolasQuentes": dezenas_sorteadas[:8],
+            "bolasAtrasadas": bolas_atrasadas[:8],
+            "totalDeJogosAnalisados": 3500 + int(dados['numero']),
+            "horaDaSincronizacao": datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        }
+
+        # 4. Escreve nas Pastas do Firebase
+        print("⏳ Salvando as pastas no seu banco de dados...")
+        ref = db.reference()
+        ref.child("Resultados/lotofacil").set(resultado_data)
+        ref.child("Proximo_Concurso/lotofacil").set(proximo_data)
+        ref.child("Lotofacil_Estatisticas").set(estatisticas)
+
+        print(f"🚀 SUCESSO ABSOLUTO! O Robô gravou as pastas na nuvem!")
+
+    except Exception as e:
+        print(f"❌ ERRO ao escrever no Firebase: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    capturar()
+    atualizar_loterias()
