@@ -1,109 +1,119 @@
 import requests
-import json
 import time
 import urllib3
 
-# Desativa avisos de segurança da Caixa
+# Desativa avisos de segurança
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# O SEU NOVO LINK DA PLANILHA JÁ ESTÁ AQUI:
+# SEU LINK NOVO JÁ ESTÁ AQUI:
 URL_PLANILHA = "https://script.google.com/macros/s/AKfycbw8pc9Dh-aVqNJ2KmycFAy3xyMj_2bshtDovNOVV-99CO8t5v_sY0IUbshu23Ysbl15xQ/exec"
 
 def perguntar_para_planilha():
     try:
         res = requests.get(URL_PLANILHA, timeout=10)
         if res.status_code == 200:
-            dados = res.json()
-            return int(dados.get('ultimo', 0))
+            return int(res.json().get('ultimo', 0))
     except Exception as e:
-        print(f"❌ Erro ao perguntar para a planilha: {e}")
+        print(f"❌ Erro ao ler a planilha: {e}")
     return -1
 
-def buscar_caixa(concurso=""):
-    url = f"https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil/{concurso}"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def buscar_dados(concurso=""):
+    # 1. TENTA NA CAIXA OFICIAL
+    url_caixa = f"https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil/{concurso}"
     try:
-        res = requests.get(url, headers=headers, verify=False, timeout=10)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
+        res = requests.get(url_caixa, verify=False, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        if res.status_code == 200 and 'numero' in res.json():
+            dados = res.json()
+            bolas = dados.get('listaDezenas') or dados.get('dezenas') or []
+            ganhadores = 0
+            if dados.get('listaRateioPremio') and len(dados['listaRateioPremio']) > 0:
+                ganhadores = dados['listaRateioPremio'][0].get('numeroDeGanhadores', 0)
+            return int(dados['numero']), dados.get('dataApuracao', ''), bolas, ganhadores
+    except:
         pass
-    return None
+    
+    # 2. SE A CAIXA TRAVAR, USA A API RESERVA
+    if concurso != "":
+        url_brasil = f"https://brasilapi.com.br/api/loterias/v1/lotofacil/{concurso}"
+        try:
+            res = requests.get(url_brasil, timeout=10)
+            if res.status_code == 200 and 'concurso' in res.json():
+                dados = res.json()
+                return int(dados['concurso']), dados.get('data', ''), dados.get('dezenas', []), 0
+        except:
+            pass
+            
+    return None, None, None, None
 
-def formatar_concurso(dados):
-    if not dados or 'numero' not in dados: return None
-    
-    ganhadores = 0
-    if dados.get('listaRateioPremio') and len(dados['listaRateioPremio']) > 0:
-        ganhadores = dados['listaRateioPremio'][0].get('numeroDeGanhadores', 0)
-
-    # CIRÚRGICO: Pega as dezenas brutas
-    dezenas_brutas = dados.get('listaDezenas', [])
-    
-    # CIRÚRGICO: Converte para número inteiro para poder ordenar corretamente
-    dezenas_numeros = [int(n) for n in dezenas_brutas if str(n).strip() != ""]
-    
-    # CIRÚRGICO: Ordena do menor para o maior (Crescente)
-    dezenas_numeros.sort()
-    
-    # CIRÚRGICO: Transforma de volta em texto com 2 dígitos (ex: "5" vira "05")
-    bolas_organizadas = [str(n).zfill(2) for n in dezenas_numeros]
-
-    return {
-        "concurso": int(dados['numero']),
-        "data": dados.get('dataApuracao', ''),
-        "bolas": bolas_organizadas, # Bolas 100% em ordem crescente
-        "ganhadores": ganhadores
-    }
+def enviar_lote(lote):
+    try:
+        res = requests.post(URL_PLANILHA, json={"lote": lote}, timeout=15)
+        if "Sucesso" in res.text:
+            return True
+    except:
+        pass
+    return False
 
 def executar():
-    print("🚜 INICIANDO O TRATOR CIRÚRGICO DA LOTOFÁCIL...")
+    print("🚜 INICIANDO O TRATOR CIRÚRGICO E ANTI-FALHAS...")
     
     ultimo_planilha = perguntar_para_planilha()
     if ultimo_planilha == -1: return
 
-    dados_atuais = buscar_caixa()
-    if not dados_atuais or 'numero' not in dados_atuais:
-        print("⚠️ A Caixa não respondeu. Tentaremos depois.")
+    concurso_atual, _, _, _ = buscar_dados("")
+    if not concurso_atual:
+        print("⚠️ Sistemas fora do ar. Tentaremos depois.")
         return
         
-    concurso_caixa = int(dados_atuais['numero'])
-    print(f"📍 Caixa: {concurso_caixa} | 📊 Planilha: {ultimo_planilha}")
+    print(f"📍 Sorteio Atual: {concurso_atual} | 📊 Na sua Planilha: {ultimo_planilha}")
 
-    if ultimo_planilha >= concurso_caixa:
-        print("✅ A Planilha já está 100% atualizada!")
+    if ultimo_planilha >= concurso_atual:
+        print("✅ A Planilha já está perfeitamente atualizada!")
         return
 
-    faltam = concurso_caixa - ultimo_planilha
-    print(f"⬇️ Faltam {faltam} concursos. Iniciando o download ordenado...")
+    print(f"⬇️ Faltam {concurso_atual - ultimo_planilha} concursos. Baixando de forma rigorosa...")
     
     lote = []
     
-    for num in range(ultimo_planilha + 1, concurso_caixa + 1):
-        dados_brutos = buscar_caixa(num) if num != concurso_caixa else dados_atuais
+    for num in range(ultimo_planilha + 1, concurso_atual + 1):
+        c_num, data, bolas, ganhadores = buscar_dados(num)
         
-        concurso_formatado = formatar_concurso(dados_brutos)
-        if concurso_formatado:
-            lote.append(concurso_formatado)
-            
-        # Envia em lotes de 50 para a planilha organizar e inserir
-        if len(lote) == 50 or num == concurso_caixa:
-            print(f"🚀 Enviando lote de {len(lote)} concursos para a Planilha...")
-            try:
-                res = requests.post(URL_PLANILHA, json={"lote": lote}, timeout=15)
-                if "Sucesso" in res.text:
-                    print(f"✅ Lote salvo! (Até o concurso {num})")
-                else:
-                    print(f"❌ Erro na planilha: {res.text}")
-            except Exception as e:
-                print(f"❌ Falha de conexão com a planilha ao enviar lote: {e}")
-            
-            lote = []
+        # SISTEMA DE TRAVA: Se falhar, ele NÃO PULA o número. Ele para tudo!
+        if not c_num or not bolas:
+            print(f"❌ A Caixa bloqueou no concurso {num}. Parando por precaução para não pular números e não bagunçar a ordem.")
+            break 
+
+        # ORGANIZA AS BOLAS DO MENOR PRO MAIOR (01, 02, 03...)
+        ints = [int(x) for x in bolas if str(x).strip() != ""]
+        ints.sort()
+        bolas_organizadas = [str(x).zfill(2) for x in ints]
+
+        lote.append({
+            "concurso": c_num,
+            "data": data,
+            "bolas": bolas_organizadas,
+            "ganhadores": ganhadores
+        })
+        
+        if len(lote) == 50:
+            print(f"🚀 Enviando lote perfeito de {len(lote)} concursos...")
+            if enviar_lote(lote):
+                print(f"✅ Salvo na planilha até o concurso {num}!")
+                lote = []
+            else:
+                print("❌ Erro ao enviar. Parando para segurança.")
+                break
             time.sleep(1) 
             
-        time.sleep(0.1)
+        time.sleep(0.3)
 
-    print("\n🏁 TRABALHO CONCLUÍDO! A Planilha está atualizada e organizada.")
+    # Envia os que sobraram na memória caso ele tenha parado antes
+    if len(lote) > 0:
+        print(f"🚀 Enviando lote final de {len(lote)} concursos...")
+        if enviar_lote(lote):
+            print("✅ Lote final salvo na planilha com sucesso!")
+
+    print("\n🏁 TRABALHO CONCLUÍDO! Olhe sua planilha agora.")
 
 if __name__ == "__main__":
     executar()
