@@ -52,7 +52,6 @@ def atualizar_loterias():
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(url, headers=headers, verify=False, timeout=15)
             
-            # Se a loteria foi descontinuada (ex: Lotogol), a Caixa pode retornar erro. O robô ignora e vai pra próxima.
             if response.status_code != 200:
                 print(f"⚠️ Aviso: A loteria {loteria} retornou status {response.status_code}. Pulando...")
                 continue
@@ -60,15 +59,15 @@ def atualizar_loterias():
             dados = response.json()
             concurso_num = str(dados.get('numero'))
             
-            # 1. PROCESSAR RATEIO (PRÊMIOS OFICIAIS)
+            # 1. PROCESSAR RATEIO (PRÊMIOS OFICIAIS) COM CORREÇÃO DA CAIXA
             rateio = {}
             lista_rateio = dados.get('listaRateioPremio', [])
             
             if loteria == 'lotofacil':
-                # Regra exata combinada para o aplicativo da Lotofácil não quebrar
                 rateio = { "pago_15": 0.0, "pago_14": 0.0, "pago_13": 30.0, "pago_12": 12.0, "pago_11": 6.0 }
                 for faixa in lista_rateio:
-                    n = faixa.get('numeroFaixa')
+                    # A CORREÇÃO: A Caixa usa 'faixa' ou 'numeroFaixa', agora o robô pega os dois!
+                    n = faixa.get('faixa') or faixa.get('numeroFaixa') 
                     v = faixa.get('valorPremio', 0.0)
                     if n == 1: rateio["pago_15"] = v
                     elif n == 2: rateio["pago_14"] = v
@@ -76,9 +75,8 @@ def atualizar_loterias():
                     elif n == 4: rateio["pago_12"] = v
                     elif n == 5: rateio["pago_11"] = v
             else:
-                # Regra genérica para todas as outras loterias (ex: faixa_1 = Sena, faixa_2 = Quina, etc)
                 for faixa in lista_rateio:
-                    n = faixa.get('numeroFaixa')
+                    n = faixa.get('faixa') or faixa.get('numeroFaixa')
                     rateio[f"faixa_{n}"] = faixa.get('valorPremio', 0.0)
 
             # 2. PACOTE DE RESULTADO ATUAL
@@ -89,7 +87,6 @@ def atualizar_loterias():
                 "rateio": rateio
             }
 
-            # Regras especiais para loterias com dados extras
             if loteria == 'maismilionaria':
                 resultado_data["trevos"] = dados.get('listaTrevosSorteados', [])
             elif loteria == 'duplasena':
@@ -99,7 +96,6 @@ def atualizar_loterias():
             elif loteria == 'diadesorte':
                 resultado_data["mes_sorteado"] = dados.get('nomeMesSorteado', '')
             elif loteria in ['loteca', 'lotogol']:
-                # Nas esportivas, pegamos a lista de partidas em vez de dezenas
                 resultado_data["partidas"] = dados.get('listaResultadoEquipeEsportiva', [])
 
             # 3. PACOTE DO PRÓXIMO CONCURSO
@@ -115,7 +111,7 @@ def atualizar_loterias():
             ref.child(f"Proximo_Concurso/{loteria}").set(proximo_data)
             ref.child(f"Historico/{loteria}/{concurso_num}").set(resultado_data)
 
-            # 5. ESTATÍSTICAS DA IA (Apenas para Lotofácil no momento)
+            # 5. ESTATÍSTICAS DA IA
             if loteria == 'lotofacil':
                 dezenas_sorteadas = [str(n).zfill(2) for n in dados.get('listaDezenas', [])]
                 todas_dezenas = [str(n).zfill(2) for n in range(1, 26)]
@@ -132,7 +128,7 @@ def atualizar_loterias():
 
         except Exception as e:
             print(f"❌ ERRO ao processar a loteria {loteria}: {e}")
-            continue # Se der erro em uma, não para o robô, vai para a próxima!
+            continue
 
     print("\n🏁 FIM DA VARREDURA! O Robô atualizou todas as loterias no Firebase.")
 
