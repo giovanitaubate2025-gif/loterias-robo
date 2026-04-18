@@ -51,7 +51,7 @@ def inicializar_firebase():
 # ==============================================================================
 def extrair_rateio_completo(dados, loteria):
     rateio = {}
-    lista = dados.get('listaRateioPremio', [])
+    lista = dados.get('listaRateioPremio') or []
     
     if loteria == 'lotofacil':
         # Valores fixos da Lotofácil que a Caixa omite às vezes
@@ -101,8 +101,9 @@ def gerar_estatisticas_gg456(historico_completo, config):
 
     frequencia = {}
     for sorteio in historico_completo:
-        for dezena in sorteio:
-            frequencia[dezena] = frequencia.get(dezena, 0) + 1
+        if isinstance(sorteio, list):
+            for dezena in sorteio:
+                frequencia[dezena] = frequencia.get(dezena, 0) + 1
             
     bolas_ordenadas = sorted(frequencia.items(), key=lambda x: x[1], reverse=True)
     bolas_quentes = [b[0] for b in bolas_ordenadas[:15]] if bolas_ordenadas else []
@@ -193,7 +194,7 @@ def executar_robo():
         novos_concursos_baixados = 0
         ultimo_pacote = dados_atuais
 
-        # BAixa o histórico faltante
+        # Baixa o histórico faltante
         if ultimo_concurso_salvo < concurso_atual_caixa:
             print(f"⬇️ Faltam {concurso_atual_caixa - ultimo_concurso_salvo} concursos. Iniciando Trator...")
             
@@ -210,19 +211,19 @@ def executar_robo():
                     }
 
                     if cfg.get('is_esportiva'):
-                        pacote_hist["partidas"] = dados.get('listaResultadoEquipeEsportiva', [])
+                        pacote_hist["partidas"] = dados.get('listaResultadoEquipeEsportiva') or []
                     else:
-                        pacote_hist["dezenas"] = [str(n).zfill(2) for n in dados.get('listaDezenas', [])]
+                        pacote_hist["dezenas"] = [str(n).zfill(2) for n in (dados.get('listaDezenas') or [])]
                     
                     if 'especial' in cfg:
                         pacote_hist[cfg['especial']] = dados.get('nomeTimeCoracaoMesSorte') or dados.get('nomeTimeCoracao') or dados.get('nomeMesSorteado') or dados.get('nomeTimeCoracaoSorteado') or ""
                     
                     if cfg.get('sorteio2'):
-                        pacote_hist["dezenas_sorteio2"] = [str(n).zfill(2) for n in dados.get('listaDezenasSegundoSorteio', [])]
+                        pacote_hist["dezenas_sorteio2"] = [str(n).zfill(2) for n in (dados.get('listaDezenasSegundoSorteio') or [])]
                         
                     if cfg.get('tem_trevos'):
-                        trevos = [str(n).zfill(2) for n in dados.get('listaDezenasSegundoSorteio', [])]
-                        if not trevos: trevos = [str(n).zfill(2) for n in dados.get('listaTrevosSorteados', dados.get('trevosSorteados', []))]
+                        trevos = [str(n).zfill(2) for n in (dados.get('listaDezenasSegundoSorteio') or [])]
+                        if not trevos: trevos = [str(n).zfill(2) for n in (dados.get('listaTrevosSorteados') or dados.get('trevosSorteados') or [])]
                         pacote_hist["trevos"] = trevos
 
                     historico_ref.child(concurso_str).set(pacote_hist)
@@ -246,18 +247,18 @@ def executar_robo():
             }
 
             if cfg.get('is_esportiva'):
-                res_atual["partidas"] = ultimo_pacote.get('listaResultadoEquipeEsportiva', [])
+                res_atual["partidas"] = ultimo_pacote.get('listaResultadoEquipeEsportiva') or []
             else:
-                res_atual["dezenas"] = [str(n).zfill(2) for n in ultimo_pacote.get('listaDezenas', [])]
+                res_atual["dezenas"] = [str(n).zfill(2) for n in (ultimo_pacote.get('listaDezenas') or [])]
 
             if 'tem_trevos' in cfg:
-                t = [str(n).zfill(2) for n in ultimo_pacote.get('listaDezenasSegundoSorteio', [])]
-                if not t: t = [str(n).zfill(2) for n in ultimo_pacote.get('listaTrevosSorteados', ultimo_pacote.get('trevosSorteados', []))]
+                t = [str(n).zfill(2) for n in (ultimo_pacote.get('listaDezenasSegundoSorteio') or [])]
+                if not t: t = [str(n).zfill(2) for n in (ultimo_pacote.get('listaTrevosSorteados') or ultimo_pacote.get('trevosSorteados') or [])]
                 res_atual["trevos"] = t
             if 'especial' in cfg:
                 res_atual[cfg['especial']] = ultimo_pacote.get('nomeTimeCoracaoMesSorte') or ultimo_pacote.get('nomeTimeCoracao') or ultimo_pacote.get('nomeMesSorteado') or ultimo_pacote.get('nomeTimeCoracaoSorteado') or ""
             if cfg.get('sorteio2'):
-                res_atual["dezenas_sorteio2"] = [str(n).zfill(2) for n in ultimo_pacote.get('listaDezenasSegundoSorteio', [])]
+                res_atual["dezenas_sorteio2"] = [str(n).zfill(2) for n in (ultimo_pacote.get('listaDezenasSegundoSorteio') or [])]
 
             proximo_data = {
                 "proximo_premio": ultimo_pacote.get('valorEstimadoProximoConcurso', 0.0),
@@ -276,20 +277,23 @@ def executar_robo():
                 matriz_dezenas = []
                 
                 if historico_completo_db:
-                    # CORREÇÃO: Trata se o Firebase retornou Lista ou Dicionário
+                    # CORREÇÃO: Trata se o Firebase retornou Lista ou Dicionário blindado contra nulos
                     if isinstance(historico_completo_db, dict):
                         for k, v in historico_completo_db.items():
-                            if v and 'dezenas' in v: matriz_dezenas.append(v['dezenas'])
+                            if isinstance(v, dict) and 'dezenas' in v: 
+                                matriz_dezenas.append(v['dezenas'])
                     elif isinstance(historico_completo_db, list):
                         for v in historico_completo_db:
-                            if v and 'dezenas' in v: matriz_dezenas.append(v['dezenas'])
+                            if isinstance(v, dict) and 'dezenas' in v: 
+                                matriz_dezenas.append(v['dezenas'])
                 
-                if not matriz_dezenas: matriz_dezenas = [res_atual["dezenas"]]
+                if not matriz_dezenas: 
+                    matriz_dezenas = [res_atual.get("dezenas", [])]
 
                 palpites, palpites_trevos, quentes, atrasadas = gerar_estatisticas_gg456(matriz_dezenas, cfg)
 
                 estatisticas = {
-                    "ultimoSorteio": res_atual["dezenas"],
+                    "ultimoSorteio": res_atual.get("dezenas", []),
                     "bolasQuentes": quentes,
                     "bolasAtrasadas": atrasadas,
                     "palpitesProntos": palpites,
@@ -299,7 +303,7 @@ def executar_robo():
 
                 if cfg.get('tem_trevos'):
                     estatisticas["ultimoTrevos"] = res_atual.get("trevos", [])
-                    estatisticas["palpitesTrevosProntos"] = palpites_trevos  # OS TREVOS SALVOS AQUI!
+                    estatisticas["palpitesTrevosProntos"] = palpites_trevos
                     
                 if 'especial' in cfg:
                     estatisticas["ultimoEspecial"] = res_atual.get(cfg['especial'], "")
