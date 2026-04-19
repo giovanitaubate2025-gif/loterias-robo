@@ -1,0 +1,24 @@
+name: Trator GG-456 (Auto)
+
+on:
+  schedule:
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-trator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Deps
+        run: pip install requests
+      - name: Rodar
+        run: python main.py
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
