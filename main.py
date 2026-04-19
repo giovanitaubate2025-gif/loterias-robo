@@ -10,212 +10,363 @@ from datetime import datetime
 from firebase_admin import credentials, db, initialize_app
 from gspread_formatting import *
 
-# Desativa avisos de segurança ao acessar a Caixa
+# Desativa avisos de segurança da API da Caixa
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 1. CONFIGURAÇÕES E REGRAS MATEMÁTICAS DAS 9 LOTERIAS PRINCIPAIS
+# 1. ARQUITETURA OFICIAL DAS 13 MODALIDADES
 # ==============================================================================
 LOTERIAS = {
-    'megasena': {'nome_pasta': 'Mega-Sena', 'bolas': 6, 'globo': 60},
-    'lotofacil': {'nome_pasta': 'Lotofacil', 'bolas': 15, 'globo': 25},
-    'quina': {'nome_pasta': 'Quina', 'bolas': 5, 'globo': 80},
-    'lotomania': {'nome_pasta': 'Lotomania', 'bolas': 20, 'globo': 100, 'is_lotomania': True},
-    'timemania': {'nome_pasta': 'Timemania', 'bolas': 10, 'globo': 80, 'especial': 'Time do Coracao'},
-    'duplasena': {'nome_pasta': 'Dupla-Sena', 'bolas': 6, 'globo': 50},
-    'maismilionaria': {'nome_pasta': '+Milionaria', 'bolas': 6, 'globo': 50, 'tem_trevos': True},
-    'diadesorte': {'nome_pasta': 'Dia-de-Sorte', 'bolas': 7, 'globo': 31, 'especial': 'Mes de Sorte'},
-    'supersete': {'nome_pasta': 'Super-Sete', 'bolas': 7, 'globo': 9, 'is_supersete': True}
+    'megasena': {'api': 'megasena', 'nome': 'Mega-Sena', 'bolas': 6, 'globo': 60, 'cor': '#209869'},
+    'lotofacil': {'api': 'lotofacil', 'nome': 'Lotofacil', 'bolas': 15, 'globo': 25, 'cor': '#930089'},
+    'quina': {'api': 'quina', 'nome': 'Quina', 'bolas': 5, 'globo': 80, 'cor': '#260085'},
+    'lotomania': {'api': 'lotomania', 'nome': 'Lotomania', 'bolas': 20, 'globo': 100, 'cor': '#F78100', 'is_lotomania': True},
+    'duplasena': {'api': 'duplasena', 'nome': 'Dupla-Sena', 'bolas': 6, 'globo': 50, 'cor': '#A61324'},
+    'diadesorte': {'api': 'diadesorte', 'nome': 'Dia-de-Sorte', 'bolas': 7, 'globo': 31, 'cor': '#CB852A', 'especial': 'Mês de Sorte'},
+    'timemania': {'api': 'timemania', 'nome': 'Timemania', 'bolas': 10, 'globo': 80, 'cor': '#049645', 'especial': 'Time do Coração'},
+    'supersete': {'api': 'supersete', 'nome': 'Super-Sete', 'bolas': 7, 'globo': 9, 'cor': '#A9CC41', 'is_supersete': True},
+    'maismilionaria': {'api': 'maismilionaria', 'nome': '+Milionaria', 'bolas': 6, 'globo': 50, 'cor': '#1E2C5A', 'tem_trevos': True},
+    'loteca': {'api': 'loteca', 'nome': 'Loteca', 'bolas': 14, 'globo': 0, 'cor': '#E83E43', 'is_esportiva': True},
+    'lotogol': {'api': 'lotogol', 'nome': 'Lotogol', 'bolas': 5, 'globo': 0, 'cor': '#E16C22', 'is_esportiva': True}
 }
+
+NOME_PLANILHA_MESTRE = "JOGOS BOLÕES ATIVO ✔️"
 
 # ==============================================================================
 # 2. CONEXÃO SEGURA COM NUVEM E PLANILHA
 # ==============================================================================
 def conectar_servicos():
-    print("🔐 Autenticando com Firebase e Google Sheets...")
-    
-    # Firebase
+    print("🔐 Autenticando Trator GG-456...")
     if not firebase_admin._apps:
-        # Pega a chave do segredo FIREBASE_SERVICE_ACCOUNT do GitHub
         cred_json = json.loads(os.environ['FIREBASE_SERVICE_ACCOUNT'])
         cred = credentials.Certificate(cred_json)
         initialize_app(cred, {'databaseURL': "https://canal-da-loterias-default-rtdb.firebaseio.com"})
     
-    # Google Sheets
-    # Pega a chave do segredo GOOGLE_SHEETS_CREDENTIALS do GitHub
     gc = gspread.service_account_from_dict(json.loads(os.environ['GOOGLE_SHEETS_CREDENTIALS']))
-    return gc
+    return gc, db
 
 # ==============================================================================
-# 3. MÓDULO DE AUTO-CRIAÇÃO E PODA DA PLANILHA (O JARDINEIRO)
+# 3. A CAÇADORA (LIMPEZA FINANCEIRA E BUSCA API)
 # ==============================================================================
-def formatar_moeda(valor):
-    if not valor:
-        return "R$ 0,00"
+def limpar_moeda(valor):
+    if not valor: return 0.0
     try:
-        return "R$ {:,.2f}".format(float(valor)).replace(',', 'X').replace('.', ',').replace('X', '.')
-    except:
-        return "R$ 0,00"
+        if isinstance(valor, (int, float)): return float(valor)
+        limpo = str(valor).replace('R$', '').replace('.', '').replace(',', '.').strip()
+        return float(limpo)
+    except: return 0.0
 
-def setup_e_poda_planilha(gc, config, dados_novos):
-    # ATENÇÃO: O nome abaixo deve ser IGUAL ao nome da sua planilha no Google Drive
-    sh = gc.open("JOGOS BOLÕES ATIVO ✔️")
-    nome_aba = config['nome_pasta'].upper()
-    
+def formatar_moeda_visual(valor):
+    return "R$ {:,.2f}".format(float(valor)).replace(',', 'X').replace('.', ',').replace('X', '.')
+
+def buscar_caixa(api_path, concurso=None):
+    sufixo = f"/{concurso}" if concurso else ""
+    url = f"https://servicebus2.caixa.gov.br/portaldeloterias/api/{api_path}{sufixo}"
     try:
-        worksheet = sh.worksheet(nome_aba)
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=15)
+        if res.status_code == 200:
+            dados = res.json()
+            if 'numero' in dados:
+                dados['valorEstimadoProximoConcurso_Limpo'] = limpar_moeda(dados.get('valorEstimadoProximoConcurso', 0))
+                return dados
+    except Exception as e:
+        pass
+    return None
+
+# ==============================================================================
+# 4. O CÉREBRO DA PLANILHA (PODA, DOMINÓ VERDE E ESTÉTICA)
+# ==============================================================================
+def setup_aba_se_nao_existe(sh, config):
+    try:
+        return sh.worksheet(config['nome'].upper())
     except gspread.exceptions.WorksheetNotFound:
-        print(f"🏗️ Criando aba {nome_aba} automaticamente (Zero Setup)...")
-        worksheet = sh.add_worksheet(title=nome_aba, rows="100", cols="20")
+        print(f"🏗️ Zero Setup: Construindo aba {config['nome'].upper()}...")
+        ws = sh.add_worksheet(title=config['nome'].upper(), rows="50", cols="25")
         
-        # Cria o Cabeçalho
+        # Cabeçalho Inteligente
         cabecalho = ["CONCURSO", "DATA"] + [f"BOLA {i+1}" for i in range(config['bolas'])]
-        if config.get('tem_trevos'):
-            cabecalho.extend(["TREVO 1", "TREVO 2"])
-        elif config.get('especial'):
-            cabecalho.append(config['especial'].upper())
+        if config.get('tem_trevos'): cabecalho.extend(["TREVO 1", "TREVO 2"])
+        elif config.get('especial'): cabecalho.append(config.get('especial').upper())
+        cabecalho.extend(["ARRECADAÇÃO", "PRÊMIO ESTIMADO"])
         
-        worksheet.insert_row(cabecalho, 1)
+        ws.insert_row(cabecalho, 1)
+        set_frozen(ws, rows=1)
         
-        # Estilização do cabeçalho
-        set_frozen(worksheet, rows=1)
-        format_cell_range(worksheet, '1:1', cellFormat(
+        # Azul Marinho no Cabeçalho
+        format_cell_range(ws, '1:1', cellFormat(
             backgroundColor=color(0.15, 0.13, 0.38),
-            textFormat=textFormat(foregroundColor=color(1, 1, 1), bold=True),
-            horizontalAlignment='CENTER'
+            textFormat=textFormat(foregroundColor=color(1, 1, 1), bold=True, fontSize=11),
+            horizontalAlignment='CENTER', verticalAlignment='MIDDLE'
         ))
+        return ws
 
-    # Verifica se o concurso já existe para não duplicar
-    concursos_salvos = worksheet.col_values(1)
-    if str(dados_novos['numero']) in concursos_salvos:
-        print(f"✅ Concurso {dados_novos['numero']} já está na planilha.")
-        return worksheet, False
+def aplicar_poda_radical(ws):
+    try:
+        todas_linhas = ws.get_all_values()
+        if not todas_linhas: return
+        
+        max_linhas_reais = len(todas_linhas)
+        max_cols_reais = len(todas_linhas[0]) if max_linhas_reais > 0 else 20
+        
+        # Tesoura: Corta o excesso redimensionando os limites físicos da aba
+        ws.resize(rows=max_linhas_reais + 2, cols=max_cols_reais)
+        
+        # Alargamento: +40 pixels para respirar (120 no total)
+        set_column_width(ws, 'A:Z', 120)
+        
+        # Centralização Total e Bordas
+        formato_base = cellFormat(
+            horizontalAlignment='CENTER', verticalAlignment='MIDDLE',
+            borders=borders(top=border('SOLID'), bottom=border('SOLID'), left=border('SOLID'), right=border('SOLID'))
+        )
+        format_cell_range(ws, f'A2:Z{max_linhas_reais}', formato_base)
+    except: pass
 
-    # Prepara a nova linha
-    dezenas = [str(d).zfill(2) for d in dados_novos.get('listaDezenas', [])]
-    nova_linha = [str(dados_novos['numero']), dados_novos['dataApuracao']] + dezenas
+def inserir_historico_planilha(ws, config, dados, is_topo=False):
+    dezenas = dados.get('listaDezenas', [])
+    if config.get('is_esportiva'): dezenas = dados.get('listaDezenas', []) or ["-"] * config['bolas']
+    
+    # Formatação de dezenas com zero à esquerda
+    dezenas_fmt = [str(d).zfill(2) for d in dezenas]
+    linha = [str(dados['numero']), dados.get('dataApuracao', '')] + dezenas_fmt
     
     if config.get('tem_trevos'):
-        trevos = [str(t).zfill(2) for t in (dados_novos.get('listaDezenasSegundoSorteio') or dados_novos.get('trevosSorteados') or [])]
-        nova_linha.extend(trevos[:2] if trevos else ["", ""])
+        trevos = [str(t).zfill(2) for t in (dados.get('listaDezenasSegundoSorteio') or [])]
+        linha.extend(trevos[:2] if trevos else ["", ""])
     elif config.get('especial'):
-        nova_linha.append(dados_novos.get('nomeTimeCoracaoMesSorte') or "")
+        linha.append(dados.get('nomeTimeCoracaoMesSorte') or "")
+        
+    linha.extend([
+        formatar_moeda_visual(dados.get('valorArrecadacao', 0)),
+        formatar_moeda_visual(dados.get('valorEstimadoProximoConcurso_Limpo', 0))
+    ])
     
-    # Insere na segunda linha (abaixo do cabeçalho)
-    worksheet.insert_row(nova_linha, 2)
-    
-    # Estética e Poda
-    num_linhas = len(worksheet.col_values(1))
-    pintar_verde = cellFormat(backgroundColor=color(0.85, 0.91, 0.82), textFormat=textFormat(bold=True))
-    format_cell_range(worksheet, 'A2:Z2', pintar_verde)
-    
-    set_column_width(worksheet, 'A:Z', 110)
-    return worksheet, True
+    if is_topo:
+        # Efeito Dominó: Despinta a antiga Linha 2
+        despintar = cellFormat(backgroundColor=color(1, 1, 1), textFormat=textFormat(bold=False))
+        format_cell_range(ws, 'A2:Z2', despintar)
+        
+        ws.insert_row(linha, 2)
+        
+        # Pinta a nova Linha 2 de Verde
+        pintar_verde = cellFormat(backgroundColor=color(0.85, 0.91, 0.82), textFormat=textFormat(bold=True, foregroundColor=color(0.11, 0.51, 0.28)))
+        format_cell_range(ws, 'A2:Z2', pintar_verde)
+    else:
+        # Histórico antigo vai para o final
+        ws.append_row(linha)
 
 # ==============================================================================
-# 4. MOTOR ESTATÍSTICO
+# 5. GERENCIAMENTO DE ABAS GLOBAIS (VITRINE E COFRE)
 # ==============================================================================
-def calcular_estatisticas(worksheet, config):
-    todas_linhas = worksheet.get_all_values()[1:]
+def salvar_vitrine_app(sh, config, dados):
+    try:
+        ws = sh.worksheet("VITRINE_APP")
+    except:
+        ws = sh.add_worksheet("VITRINE_APP", rows="20", cols="5")
+        ws.insert_row(["JOGO", "PRÓXIMO PRÊMIO", "DATA PRÓXIMO", "HORA ATUALIZAÇÃO", "STATUS"], 1)
+        set_frozen(ws, rows=1)
+        format_cell_range(ws, 'A1:E1', cellFormat(backgroundColor=color(0.1, 0.1, 0.1), textFormat=textFormat(foregroundColor=color(1,1,1), bold=True)))
+    
+    status = "AGUARDANDO SORTEIO" if dados.get('acumulado') else "SORTEIO REALIZADO"
+    linha_info = [
+        config['nome'].upper(),
+        formatar_moeda_visual(dados.get('valorEstimadoProximoConcurso_Limpo', 0)),
+        dados.get('dataProximoConcurso', 'Aguardando'),
+        datetime.now().strftime("%H:%M:%S"),
+        status
+    ]
+    
+    # Procura se o jogo já está na vitrine e atualiza, senão adiciona
+    col_jogos = ws.col_values(1)
+    if config['nome'].upper() in col_jogos:
+        idx = col_jogos.index(config['nome'].upper()) + 1
+        ws.update(f'A{idx}:E{idx}', [linha_info])
+    else:
+        ws.append_row(linha_info)
+
+def salvar_cofre_premiacoes(sh, config, dados):
+    try:
+        ws = sh.worksheet("PREMIAÇÕES GLOBAIS")
+    except:
+        ws = sh.add_worksheet("PREMIAÇÕES GLOBAIS", rows="100", cols="8")
+        ws.insert_row(["JOGO", "CONCURSO", "DATA", "FAIXA", "GANHADORES", "VALOR PAGO", "ACUMULOU?", "PROX. ESTIMATIVA"], 1)
+        set_frozen(ws, rows=1)
+        format_cell_range(ws, '1:1', cellFormat(backgroundColor=color(0.1, 0.1, 0.1), textFormat=textFormat(foregroundColor=color(1,1,1), bold=True)))
+    
+    # Remove as antigas do mesmo jogo
+    linhas = ws.get_all_values()
+    for i in range(len(linhas), 1, -1):
+        if linhas[i-1][0] == config['nome'].upper():
+            ws.delete_rows(i)
+            
+    # Insere as novas
+    acumulou_geral = "SIM" if dados.get('acumulado') else "NÃO"
+    estimativa = formatar_moeda_visual(dados.get('valorEstimadoProximoConcurso_Limpo', 0))
+    
+    for faixa in reversed(dados.get('listaRateioPremio', [])):
+        desc = faixa.get('descricaoFaixa', '')
+        ganhadores = faixa.get('numeroDeGanhadores', 0)
+        valor = formatar_moeda_visual(faixa.get('valorPremio', 0))
+        
+        # A Regra do Acumulou da Caixa
+        if ganhadores == 0: valor = "ACUMULOU"
+            
+        ws.insert_row([config['nome'].upper(), str(dados['numero']), dados.get('dataApuracao', ''), desc, ganhadores, valor, acumulou_geral, estimativa], 2)
+
+# ==============================================================================
+# 6. MOTOR ESTATÍSTICO (GERAÇÃO DOS 50 JOGOS COM DADOS REAIS)
+# ==============================================================================
+def processar_estatisticas(ws, config, concurso_base):
+    if config.get('is_esportiva'): return [] # Esportivas não geram bolas
+    
+    todas_linhas = ws.get_all_values()[1:]
+    # Pega apenas as colunas das bolas baseadas na config
     historico = [linha[2:2+config['bolas']] for linha in todas_linhas if len(linha) > 2]
     
     frequencia = {}
     for jogo in historico:
         for bola in jogo:
-            if bola.strip():
-                frequencia[bola] = frequencia.get(bola, 0) + 1
-    
+            bola = bola.strip()
+            if bola: frequencia[bola] = frequencia.get(bola, 0) + 1
+            
     quentes = [k for k, v in sorted(frequencia.items(), key=lambda item: item[1], reverse=True)]
     
-    if config.get('is_supersete'):
-        universo = [str(i) for i in range(10)]
-    elif config.get('is_lotomania'):
-        universo = [str(i).zfill(2) if i < 100 else '00' for i in range(100)]
-    else:
-        universo = [str(i).zfill(2) for i in range(1, config['globo'] + 1)]
-
+    universo = []
+    if config.get('is_supersete'): universo = [str(i) for i in range(10)]
+    elif config.get('is_lotomania'): universo = [str(i).zfill(2) if i < 100 else '00' for i in range(100)]
+    else: universo = [str(i).zfill(2) for i in range(1, config['globo'] + 1)]
+    
     lotes_prontos = []
     for _ in range(50):
         jogo = set()
         while len(jogo) < config['bolas']:
-            pool = quentes[:20] if (random.random() < 0.7 and len(quentes) >= 20) else universo
+            # Mix 70% Quentes / 30% Aleatórias do Universo
+            pool = quentes[:int(config['globo']*0.3)] if (random.random() < 0.7 and len(quentes) > 5) else universo
+            if not pool: pool = universo # Segurança
             bola = random.choice(pool)
+            
             if config.get('is_supersete'):
                 lotes_prontos.append([random.choice(universo) for _ in range(7)])
                 break
             jogo.add(bola)
+            
         if not config.get('is_supersete'):
             lotes_prontos.append(sorted(list(jogo)))
             
     return lotes_prontos
 
 # ==============================================================================
-# 5. GERENCIADOR DE NUVEM (FIREBASE)
+# 7. ARQUITETURA DE NUVEM EM 5 PASTAS (FIREBASE)
 # ==============================================================================
-def atualizar_nuvem(config, dados, lotes_prontos):
-    ref_jogo = db.reference(config['nome_pasta'])
+def atualizar_nuvem_firebase(config, dados, lotes, historico_completo=False):
+    ref_jogo = db.reference(config['api'])
     
-    # Sorteio de Hoje
+    # 1. HISTÓRICO DE SORTEIOS (Banco Absoluto)
+    concurso = str(dados['numero'])
+    pacote_historico = {
+        'concurso': concurso, 'data_sorteio': dados.get('dataApuracao', ''),
+        'dezenas': dados.get('listaDezenas', []), 'acumulado': dados.get('acumulado', False),
+        'rateio': { f"pago_{f.get('faixa')}": f.get('valorPremio', 0) for f in dados.get('listaRateioPremio', []) }
+    }
+    ref_jogo.child(f'HISTORICO_DE_SORTEIOS/{concurso}').set(pacote_historico)
+    
+    if historico_completo: return # Se for varredura antiga, para por aqui
+    
+    # 2. SORTEIO DE HOJE (A Vitrine)
     ref_jogo.child('SORTEIO_DE_HOJE').set({
-        'concurso': str(dados['numero']),
-        'data': dados['dataApuracao'],
-        'dezenas': [str(d).zfill(2) for d in dados.get('listaDezenas', [])],
-        'arrecadacao_total': formatar_moeda(dados.get('valorArrecadacao', 0))
+        'concurso': concurso, 'data': dados.get('dataApuracao', ''),
+        'dezenas': dados.get('listaDezenas', []), 'arrecadacao_total': formatar_moeda_visual(dados.get('valorArrecadacao', 0))
     })
     
-    # Próximo Prêmio
-    valor_estimado = dados.get('valorEstimadoProximoConcurso', 0)
-    data_prox = dados.get('dataProximoConcurso', 'Aguardando')
+    # 3. PRÓXIMO PRÊMIO (Marketing - Número limpo para contas no App)
     ref_jogo.child('PROXIMO_PREMIO').set({
-        'texto_informativo': f"Estimativa de prêmio do próximo concurso {data_prox}",
-        'valor_estimado': formatar_moeda(valor_estimado)
+        'data_proximo': dados.get('dataProximoConcurso', 'Aguardando'),
+        'proximo_premio': dados.get('valorEstimadoProximoConcurso_Limpo', 0),
+        'status': "ACUMULOU" if dados.get('acumulado') else "SORTEIO REALIZADO"
     })
     
-    # Estatísticas
-    ref_jogo.child('ESTATISTICAS').set({
-        'jogos_50': lotes_prontos,
-        'selo_garantia': {
-            'data_geracao': datetime.now().strftime("%d/%m/%Y"),
-            'hora_geracao': datetime.now().strftime("%H:%M:%S"),
-            'concurso_base': str(dados['numero'])
-        }
-    })
-    print(f"☁️ Nuvem do jogo {config['nome_pasta']} atualizada!")
+    # 4. TABELA DE PREMIAÇÕES (Regra do Acumulou)
+    tabela = {}
+    for f in dados.get('listaRateioPremio', []):
+        nome = f.get('descricaoFaixa', f"Faixa {f.get('faixa')}")
+        if f.get('numeroDeGanhadores', 0) == 0:
+            tabela[nome] = f"ACUMULOU - Estimativa {formatar_moeda_visual(dados.get('valorEstimadoProximoConcurso_Limpo', 0))}"
+        else:
+            tabela[nome] = formatar_moeda_visual(f.get('valorPremio', 0))
+    ref_jogo.child('TABELA_DE_PREMIACOES').set(tabela)
+    
+    # 5. ESTATÍSTICAS (Os 50 Jogos)
+    if lotes:
+        ref_jogo.child('ESTATISTICAS').set({
+            'jogos_50': lotes,
+            'selo_garantia': { 'data_geracao': datetime.now().strftime("%d/%m/%Y"), 'hora_geracao': datetime.now().strftime("%H:%M:%S"), 'concurso_base': concurso }
+        })
+    print(f"☁️ Nuvem do jogo {config['nome']} atualizada com sucesso nas 5 pastas!")
 
 # ==============================================================================
-# 6. FLUXO PRINCIPAL
+# 8. O TRATOR EXECUTIVO (ORQUESTRADOR GERAL)
 # ==============================================================================
-def processar_loterias():
-    print("🚀 Iniciando Trator de Elite...")
+def executar_trator():
+    print("🚀 Ligando Motores do Trator GG-456...")
     try:
-        gc = conectar_servicos()
+        gc, _ = conectar_servicos()
+        sh = gc.open(NOME_PLANILHA_MESTRE)
     except Exception as e:
-        print(f"❌ Erro na conexão: {e}")
+        print(f"❌ Erro Crítico: Não consegui acessar Planilha ou Nuvem. {e}")
         return
 
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    loterias_processadas = 0
-    
-    for api_id, config in LOTERIAS.items():
-        print(f"\n🔎 Buscando: {config['nome_pasta']}")
-        try:
-            url = f"https://servicebus2.caixa.gov.br/portaldeloterias/api/{api_id}"
-            res = requests.get(url, headers=headers, verify=False, timeout=20)
+    for chave_api, config in LOTERIAS.items():
+        print(f"\n🔎 Analisando Jogo: {config['nome']}")
+        ws = setup_aba_se_nao_existe(sh, config)
+        
+        # 1. Pega o Sorteio Mais Recente da Caixa
+        dados_oficiais = buscar_caixa(config['api'])
+        if not dados_oficiais or 'numero' not in dados_oficiais:
+            print(f"⚠️ Caixa falhou para {config['nome']}. Pulando...")
+            continue
             
-            if res.status_code == 200:
-                dados_caixa = res.json()
-                worksheet, teve_novo = setup_e_poda_planilha(gc, config, dados_caixa)
-                
-                if teve_novo:
-                    lotes = calcular_estatisticas(worksheet, config)
-                    atualizar_nuvem(config, dados_caixa, lotes)
-                    loterias_processadas += 1
-            else:
-                print(f"⚠️ Caixa não respondeu (Status {res.status_code})")
-        except Exception as e:
-            print(f"❌ Erro em {config['nome_pasta']}: {e}")
+        concurso_atual_caixa = int(dados_oficiais['numero'])
+        concursos_salvos = [c for c in ws.col_values(1) if c.isdigit()]
+        
+        topo_local = int(concursos_salvos[0]) if concursos_salvos else 0
+        fundo_local = int(concursos_salvos[-1]) if concursos_salvos else concurso_atual_caixa + 1
+        
+        # 2. ATUALIZAÇÃO DO DIA (VITRINE)
+        if topo_local < concurso_atual_caixa:
+            print(f"✅ Novo sorteio encontrado ({concurso_atual_caixa}). Atualizando Topo e Nuvem...")
+            # Puxa o dado específico se o topo estiver defasado em >1
+            if concurso_atual_caixa - topo_local > 1:
+                dados_oficiais = buscar_caixa(config['api'], topo_local + 1)
             
-    print(f"\n🏁 Finalizado! Novos processados: {loterias_processadas}")
+            if dados_oficiais:
+                inserir_historico_planilha(ws, config, dados_oficiais, is_topo=True)
+                lotes = processar_estatisticas(ws, config, str(dados_oficiais['numero']))
+                atualizar_nuvem_firebase(config, dados_oficiais, lotes, historico_completo=False)
+                salvar_vitrine_app(sh, config, dados_oficiais)
+                salvar_cofre_premiacoes(sh, config, dados_oficiais)
+        else:
+            print(f"✔️ {config['nome']} já está atualizado no concurso {concurso_atual_caixa}.")
+
+        # 3. VARREDURA DE HISTÓRICO REVERSO (O TRATOR DE VERDADE)
+        # Se falta histórico até o concurso 1, ele baixa em lotes para não estourar o tempo
+        if fundo_local > 1:
+            limite_batch = 10 # Baixa 10 concursos antigos por execução para não travar
+            inicio_busca = fundo_local - 1
+            alvo_final = max(1, inicio_busca - limite_batch)
+            
+            print(f"🚜 Tratorando histórico ausente... Buscando do {inicio_busca} até {alvo_final}")
+            for conc_antigo in range(inicio_busca, alvo_final - 1, -1):
+                dados_antigos = buscar_caixa(config['api'], conc_antigo)
+                if dados_antigos:
+                    inserir_historico_planilha(ws, config, dados_antigos, is_topo=False)
+                    atualizar_nuvem_firebase(config, dados_antigos, None, historico_completo=True)
+                time.sleep(0.5) # Respeito à API da Caixa
+
+        # 4. FAXINA FINAL (PODA E ALARGAMENTO)
+        print(f"✂️ Aplicando Poda Radical e Estética Premium em {config['nome']}...")
+        aplicar_poda_radical(ws)
+
+    print("\n🏁 Plantão GG-456 Concluído com Sucesso Total!")
 
 if __name__ == "__main__":
-    processar_loterias()
+    executar_trator()
