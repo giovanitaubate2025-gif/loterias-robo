@@ -2,32 +2,34 @@ name: Loterias Robo Auto (Trator GG-456)
 
 on:
   schedule:
-    # Primeira Tentativa: 21:30 BRT (00:30 UTC)
+    # Atenção: Horários em UTC (GMT+0). Brasil = UTC-3.
+    # 00:30 UTC = 21:30 Brasil
+    # 01:00 UTC = 22:00 Brasil
+    # 02:30 UTC = 23:30 Brasil
     - cron: '30 0 * * *'
-    # Segunda Tentativa: 22:00 BRT (01:00 UTC)
     - cron: '0 1 * * *'
-    # Tentativa Final Segura: 23:30 BRT (02:30 UTC)
     - cron: '30 2 * * *'
-    
-  workflow_dispatch: # Botão mágico para você rodar manualmente no painel do GitHub
+  
+  # Gatilho manual para você rodar quando quiser no painel "Actions"
+  workflow_dispatch:
 
 jobs:
   run-trator:
     runs-on: ubuntu-latest
     
     steps:
-      - name: 📥 Clonando os arquivos do projeto
+      - name: Checkout Repo
         uses: actions/checkout@v3
-
-      - name: 🐍 Preparando Python 3.10
+        
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      - name: 📦 Instalando ferramentas do Robô
-        run: pip install -r requirements.txt
-
-      - name: 🚜 Acionando o Trator de Elite
+          
+      - name: Instalar Ferramentas Mestre
+        run: pip install requests gspread gspread-formatting firebase-admin urllib3
+          
+      - name: Acionar Motor GG-456
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
