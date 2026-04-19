@@ -1,25 +1,34 @@
-name: Loterias Robo Auto
+name: Loterias Robo Auto (Trator GG-456)
 
 on:
-  workflow_dispatch: # Permite correr manualmente
   schedule:
-    - cron: '*/5 * * * *' # Tenta correr a cada 5 minutos
+    # Primeira Tentativa: 21:30 BRT (00:30 UTC)
+    - cron: '30 0 * * *'
+    # Segunda Tentativa: 22:00 BRT (01:00 UTC)
+    - cron: '0 1 * * *'
+    # Tentativa Final Segura: 23:30 BRT (02:30 UTC)
+    - cron: '30 2 * * *'
+    
+  workflow_dispatch: # Botão mágico para você rodar manualmente no painel do GitHub
 
 jobs:
-  build:
+  run-trator:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v3
+      - name: 📥 Clonando os arquivos do projeto
+        uses: actions/checkout@v3
 
-      - name: Instalar Python
+      - name: 🐍 Preparando Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Instalar Bibliotecas
-        run: pip install firebase-admin requests urllib3
+      - name: 📦 Instalando ferramentas do Robô
+        run: pip install -r requirements.txt
 
-      - name: Rodar o Robo
+      - name: 🚜 Acionando o Trator de Elite
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-        run: python robo.py
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        run: python main.py
