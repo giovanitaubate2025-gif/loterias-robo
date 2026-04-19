@@ -3,11 +3,10 @@ import json
 import requests
 from datetime import datetime
 
-# 1. PEGA AS CHAVES DO COFRE
+# BUSCA AS CHAVES NO GITHUB
 chave_drive = os.environ.get("GOOGLE_CREDENTIALS")
 chave_nuvem = os.environ.get("FIREBASE_KEY")
 
-# 2. CONFIGURAÇÕES FIXAS
 URL_PLANILHA = "https://script.google.com/macros/s/AKfycby-taEbqkJHCo7G0gNOXutIhk6IpTJ2TWmCyd8yoAJV0hKtGUV-wGYEuidJJg7OSFNDIA/exec"
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 SECRET_FIREBASE = "7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd"
@@ -17,22 +16,21 @@ def motor_principal():
     agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     try:
-        # FASE A: NUVEM
         if chave_nuvem:
             info = json.loads(chave_nuvem)
-            status = {"status": "ONLINE", "projeto": info.get('project_id'), "horario": agora}
+            payload = {"status": "ONLINE", "projeto": info.get('project_id'), "hora": agora}
             url = f"{URL_FIREBASE}STATUS_MOTOR.json?auth={SECRET_FIREBASE}"
-            requests.put(url, data=json.dumps(status))
+            requests.put(url, data=json.dumps(payload))
             print("🚀 Nuvem sincronizada!")
 
-        # FASE B: PLANILHA
-        print("📡 Enviando sinal para a Planilha...")
-        params = {"acao": "EXECUTAR_TRATOR_GLOBAL", "loteria": "TODAS"}
+        print("📡 Enviando comando para a Planilha...")
+        # 👇 A SENHA EXATA QUE A SUA PLANILHA ESPERA (Projeto 14) 👇
+        params = {"acao": "EXECUTAR_TRATOR", "loteria": "TODOS"}
         res = requests.get(URL_PLANILHA, params=params, timeout=300)
-        print(f"📥 RESPOSTA: {res.text}")
+        print(f"Resposta da Planilha: {res.text}")
 
     except Exception as e:
-        print(f"❌ Erro crítico: {e}")
+        print(f"❌ Erro: {e}")
 
 if __name__ == "__main__":
     motor_principal()
