@@ -76,7 +76,7 @@ def limpar_moeda(valor):
         return 0.0
 
 # =========================================================================
-# BUSCADOR DE APIS (Caixa e Brasil API)
+# BUSCADOR DE APIS (Caixa e Brasil API) - Aprimorado para buscar Times e Trevos
 # =========================================================================
 def buscar_sorteio(api_nome, concurso=None):
     sufixo = f"/{concurso}" if concurso else ""
@@ -88,7 +88,7 @@ def buscar_sorteio(api_nome, concurso=None):
         if req.status_code == 200:
             d = req.json()
             if d.get("numero"):
-                return {
+                resultado = {
                     "concurso": d.get("numero"),
                     "data": d.get("dataApuracao"),
                     "dezenas": d.get("listaDezenas") or d.get("dezenas") or [],
@@ -97,10 +97,19 @@ def buscar_sorteio(api_nome, concurso=None):
                     "data_proximo": d.get("dataProximoConcurso", "A definir"),
                     "rateio": d.get("listaRateioPremio", [])
                 }
+                # 🔥 BUSCA PROFUNDA DE CAMPOS ESPECIAIS (Time, Trevos, Mês) 🔥
+                if d.get("nomeTimeCoracao"):
+                    resultado["especial"] = d.get("nomeTimeCoracao")
+                elif d.get("nomeMesSorte"):
+                    resultado["especial"] = d.get("nomeMesSorte")
+                elif d.get("listaTrevos"):
+                    resultado["especial"] = d.get("listaTrevos")
+                
+                return resultado
     except:
         pass
 
-    # Tentativa 2: BRASIL API
+    # Tentativa 2: BRASIL API (Fallback com rateios e campos especiais)
     map_brasil = {
         'quina': 'quina', 'megasena': 'mega-sena', 'lotofacil': 'lotofacil',
         'lotomania': 'lotomania', 'timemania': 'timemania', 'duplasena': 'dupla-sena',
@@ -114,15 +123,24 @@ def buscar_sorteio(api_nome, concurso=None):
             if req.status_code == 200:
                 b = req.json()
                 if b.get("concurso"):
-                    return {
+                    resultado = {
                         "concurso": b.get("concurso"),
                         "data": b.get("data"),
                         "dezenas": b.get("dezenas", []),
                         "acumulou": b.get("acumulou", False),
                         "proximo_premio": limpar_moeda(b.get("valor_estimado_proximo_concurso", 0)),
                         "data_proximo": b.get("data_proximo_concurso", "A definir"),
-                        "rateio": []
+                        "rateio": b.get("premiacoes", []) # Puxa o rateio da Brasil API se precisar
                     }
+                    # 🔥 BUSCA PROFUNDA DE CAMPOS ESPECIAIS (Time, Trevos, Mês) 🔥
+                    if b.get("time_do_coracao"):
+                        resultado["especial"] = b.get("time_do_coracao")
+                    elif b.get("mes_da_sorte"):
+                        resultado["especial"] = b.get("mes_da_sorte")
+                    elif b.get("trevos"):
+                        resultado["especial"] = b.get("trevos")
+                        
+                    return resultado
         except:
             pass
             
@@ -149,22 +167,24 @@ def executar_trator_historico(api_nome, nome_jogo, pasta_jogo, concurso_atual):
 
     # Ordena do mais recente para o mais antigo para baixar
     faltantes.sort(key=int, reverse=True)
-    log(f"⚠️ Faltam {len(faltantes)} concursos de {nome_jogo}. Iniciando download profundo...")
+    log(f"⚠️ Faltam {len(faltantes)} concursos de {nome_jogo}. Iniciando download absoluto (Todos os concursos)...")
     
-    # Para evitar que o GitHub cancele o script por tempo, limitamos a baixar 300 por vez. 
-    # Em poucos dias o banco estará 100% cheio, e os recentes entram na hora.
-    lote_download = faltantes[:300] 
+    # AGORA BAIXA TODOS OS CONCURSOS, SEM LIMITES DE LOTE.
+    lote_download = faltantes 
     
     for conc in lote_download:
         dados_conc = buscar_sorteio(api_nome, conc)
         if dados_conc and dados_conc["dezenas"]:
-            # Salva individualmente na nuvem
+            # Salva individualmente na nuvem, incluindo campos especiais se houverem
             pacote = {"data": dados_conc["data"], "dezenas": dados_conc["dezenas"]}
+            if "especial" in dados_conc:
+                pacote["especial"] = dados_conc["especial"]
+                
             atualizar_nuvem_parcial(f"APP_CLIENTE/{pasta_jogo}/HISTORICO_DE_SORTEIOS/{conc}", pacote)
             historico_nuvem[str(conc)] = pacote
-            time.sleep(0.3) # Pequena pausa para não ser bloqueado pela Caixa
+            time.sleep(0.2) # Intervalo pequeno de 0.2s para evitar bloqueio da API da Caixa
             
-    log(f"✅ Trator baixou {len(lote_download)} jogos de {nome_jogo}.")
+    log(f"✅ Trator baixou todos os {len(lote_download)} jogos faltantes de {nome_jogo}.")
     return historico_nuvem
 
 # =========================================================================
@@ -241,18 +261,24 @@ def executar_motor_gg456():
         
         # 3. Garante que o concurso de hoje está no histórico
         if str(concurso_atual) not in historico_completo:
-            historico_completo[str(concurso_atual)] = {"data": dados_atuais["data"], "dezenas": dados_atuais["dezenas"]}
+            pacote_hoje_historico = {"data": dados_atuais["data"], "dezenas": dados_atuais["dezenas"]}
+            if "especial" in dados_atuais: pacote_hoje_historico["especial"] = dados_atuais["especial"]
+            historico_completo[str(concurso_atual)] = pacote_hoje_historico
         
         # =========================================================
         # SALVANDO NAS 5 PASTAS DO FIREBASE (Regra do Relatório)
         # =========================================================
         
         # 📂 SORTEIO_DE_HOJE
-        salvar_nuvem(f"APP_CLIENTE/{pasta_jogo}/SORTEIO_DE_HOJE", {
+        payload_sorteio_hoje = {
             "concurso": concurso_atual,
             "data": dados_atuais["data"],
             "dezenas": dados_atuais["dezenas"]
-        })
+        }
+        if "especial" in dados_atuais:
+            payload_sorteio_hoje["especial"] = dados_atuais["especial"]
+            
+        salvar_nuvem(f"APP_CLIENTE/{pasta_jogo}/SORTEIO_DE_HOJE", payload_sorteio_hoje)
         
         # 📂 PROXIMO_PREMIO
         salvar_nuvem(f"APP_CLIENTE/{pasta_jogo}/PROXIMO_PREMIO", {
@@ -269,8 +295,6 @@ def executar_motor_gg456():
         # 📂 ESTATISTICAS (Motor Estatístico)
         estatisticas = fabricar_estatisticas(historico_completo, config, concurso_atual)
         salvar_nuvem(f"APP_CLIENTE/{pasta_jogo}/ESTATISTICAS", estatisticas)
-        
-        # O HISTORICO_DE_SORTEIOS já foi salvo pela função do Trator
         
         # =========================================================
         # PREPARANDO AS ABAS GLOBAIS (Vitrine e Cofre)
