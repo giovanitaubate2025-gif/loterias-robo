@@ -1,24 +1,13 @@
-name: Trator GG-456 (Auto)
-
-on:
   schedule:
-    - cron: '30 0 * * *'
-  workflow_dispatch:
+    - cron: '0 19 * * *'  # Acorda às 16:00 BRT (Reconhecimento)
+    - cron: '30 0 * * *'  # Acorda às 21:30 BRT (Primeira Caçada)
+    - cron: '0 1 * * *'   # Acorda às 22:00 BRT (Segunda Caçada)
+    - cron: '30 2 * * *'  # Acorda às 23:30 BRT (Última Caçada da Noite)
+    - cron: '0 12 * * *'  # Acorda às 09:00 BRT (Repescagem do dia seguinte)
+*(As horas parecem diferentes no código acima porque o servidor do GitHub fica na Europa (UTC), então nós temos que somar 3 horas para bater com o horário de Brasília).*
 
-jobs:
-  run-trator:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      - name: Deps
-        run: pip install requests
-      - name: Rodar
-        run: python main.py
-        env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
+**Resumo:**
+1. Copie o código Python verde acima e substitua o seu arquivo `main.py` lá no GitHub.
+2. Edite o seu arquivo `.yml` (o da sua foto) colocando a lista de horários (cron) que mandei acima.
+
+Feito isso, o seu sistema está **100% profisionalizado e a rodar na nuvem para sempre!**
