@@ -76,7 +76,7 @@ def limpar_moeda(valor):
         return 0.0
 
 # =========================================================================
-# BUSCADOR DE APIS (Caixa e Brasil API) - Aprimorado para buscar Times e Trevos
+# BUSCADOR DE APIS (Caixa e Brasil API) - Aprimorado para buscar Tudo
 # =========================================================================
 def buscar_sorteio(api_nome, concurso=None):
     sufixo = f"/{concurso}" if concurso else ""
@@ -147,7 +147,7 @@ def buscar_sorteio(api_nome, concurso=None):
     return None
 
 # =========================================================================
-# 2. O TRATOR DE HISTÓRICO (CARGA DE BIG DATA)
+# 2. O TRATOR DE HISTÓRICO (CARGA DE BIG DATA ABSOLUTA)
 # =========================================================================
 def executar_trator_historico(api_nome, nome_jogo, pasta_jogo, concurso_atual):
     log(f"🚜 Trator ativado para {nome_jogo}. Verificando banco de dados...")
@@ -175,8 +175,14 @@ def executar_trator_historico(api_nome, nome_jogo, pasta_jogo, concurso_atual):
     for conc in lote_download:
         dados_conc = buscar_sorteio(api_nome, conc)
         if dados_conc and dados_conc["dezenas"]:
-            # Salva individualmente na nuvem, incluindo campos especiais se houverem
-            pacote = {"data": dados_conc["data"], "dezenas": dados_conc["dezenas"]}
+            # 🔥 AGORA SALVA ABSOLUTAMENTE TUDO NO HISTÓRICO (Dezenas, Rateios e Especiais)
+            pacote = {
+                "data": dados_conc.get("data", ""),
+                "dezenas": dados_conc.get("dezenas", []),
+                "rateio": dados_conc.get("rateio", []),
+                "acumulou": dados_conc.get("acumulou", False)
+            }
+            
             if "especial" in dados_conc:
                 pacote["especial"] = dados_conc["especial"]
                 
@@ -184,7 +190,7 @@ def executar_trator_historico(api_nome, nome_jogo, pasta_jogo, concurso_atual):
             historico_nuvem[str(conc)] = pacote
             time.sleep(0.2) # Intervalo pequeno de 0.2s para evitar bloqueio da API da Caixa
             
-    log(f"✅ Trator baixou todos os {len(lote_download)} jogos faltantes de {nome_jogo}.")
+    log(f"✅ Trator baixou todos os {len(lote_download)} jogos faltantes de {nome_jogo} com informações completas.")
     return historico_nuvem
 
 # =========================================================================
@@ -261,7 +267,12 @@ def executar_motor_gg456():
         
         # 3. Garante que o concurso de hoje está no histórico
         if str(concurso_atual) not in historico_completo:
-            pacote_hoje_historico = {"data": dados_atuais["data"], "dezenas": dados_atuais["dezenas"]}
+            pacote_hoje_historico = {
+                "data": dados_atuais["data"], 
+                "dezenas": dados_atuais["dezenas"],
+                "rateio": dados_atuais.get("rateio", []),
+                "acumulou": dados_atuais.get("acumulou", False)
+            }
             if "especial" in dados_atuais: pacote_hoje_historico["especial"] = dados_atuais["especial"]
             historico_completo[str(concurso_atual)] = pacote_hoje_historico
         
