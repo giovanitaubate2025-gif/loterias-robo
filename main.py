@@ -5,30 +5,30 @@ import random
 from datetime import datetime, timedelta
 from collections import Counter
 
-print("=============================================================")
-print("☁️ ROBÔ LOTERIAS NUVEM - SISTEMA DEFINITIVO CORRIGIDO ☁️")
-print("=============================================================")
-
 # =========================================================================
 # 1. CONFIGURAÇÕES E CREDENCIAIS
 # =========================================================================
+# O segredo vem do GitHub Actions ou da variável de ambiente
 SECRET_FIREBASE = os.environ.get('FIREBASE_KEY', '7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd')
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 
+# Configuração detalhada conforme pedido
 JOGOS = {
-    "megasena": {"nome": "MEGA-SENA", "total_bolas": 60, "sorteio": 6},
-    "lotofacil": {"nome": "LOTOFACIL", "total_bolas": 25, "sorteio": 15},
-    "quina": {"nome": "QUINA", "total_bolas": 80, "sorteio": 5},
-    "lotomania": {"nome": "LOTOMANIA", "total_bolas": 100, "sorteio": 20},
-    "timemania": {"nome": "TIMEMANIA", "total_bolas": 80, "sorteio": 7},
-    "diadesorte": {"nome": "DIA-DE-SORTE", "total_bolas": 31, "sorteio": 7},
-    "maismilionaria": {"nome": "MAIS-MILIONARIA", "total_bolas": 50, "sorteio": 6},
-    "duplasena": {"nome": "DUPLA-SENA", "total_bolas": 50, "sorteio": 6},
-    "supersete": {"nome": "SUPER-SETE", "total_bolas": 9, "sorteio": 7}
+    "megasena": {"nome": "MEGA-SENA", "total_bolas": 60, "sorteio_api": 6, "gerar_qtd": 6},
+    "lotofacil": {"nome": "LOTOFACIL", "total_bolas": 25, "sorteio_api": 15, "gerar_qtd": 15},
+    "quina": {"nome": "QUINA", "total_bolas": 80, "sorteio_api": 5, "gerar_qtd": 5},
+    "lotomania": {"nome": "LOTOMANIA", "total_bolas": 100, "sorteio_api": 20, "gerar_qtd": 50},
+    "timemania": {"nome": "TIMEMANIA", "total_bolas": 80, "sorteio_api": 7, "gerar_qtd": 10},
+    "diadesorte": {"nome": "DIA-DE-SORTE", "total_bolas": 31, "sorteio_api": 7, "gerar_qtd": 7},
+    "maismilionaria": {"nome": "MAIS-MILIONARIA", "total_bolas": 50, "sorteio_api": 6, "gerar_qtd": 6, "trevos": 2},
+    "duplasena": {"nome": "DUPLA-SENA", "total_bolas": 50, "sorteio_api": 6, "gerar_qtd": 6},
+    "supersete": {"nome": "SUPER-SETE", "total_bolas": 9, "sorteio_api": 7, "gerar_qtd": 7, "tipo": "colunar"},
+    "loteca": {"nome": "LOTECA", "tipo": "esportiva", "jogos": 14},
+    "lotogol": {"nome": "LOTOGOL", "tipo": "esportiva", "jogos": 5}
 }
 
 # =========================================================================
-# 2. FUNÇÕES DO FIREBASE (AS 4 GAVETAS)
+# 2. UTILITÁRIOS E CONEXÃO FIREBASE
 # =========================================================================
 def db_get(caminho):
     url = f"{URL_FIREBASE}{caminho}.json?auth={SECRET_FIREBASE}"
@@ -52,172 +52,145 @@ def db_delete(caminho):
     try: requests.delete(url, timeout=20)
     except: pass
 
-def obter_data_hoje_brt():
-    agora_utc = datetime.utcnow()
-    agora_brt = agora_utc - timedelta(hours=3)
-    return agora_brt.strftime("%d/%m/%Y")
-
 def formatar_moeda(valor):
     try:
-        v = float(valor)
-        return f"R$ {v:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+        return f"R$ {float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     except: return "R$ 0,00"
 
+def obter_data_brt():
+    return (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y")
+
 # =========================================================================
-# 3. O CÉREBRO MATEMÁTICO (GERADOR DE 50 JOGOS)
+# 3. CÉREBRO DE ESTATÍSTICAS (GERADOR DE PALPITES)
 # =========================================================================
-def calcular_estatisticas(nome_jogo, config_jogo):
+def gerar_50_jogos(api_nome, config):
+    nome_jogo = config["nome"]
     historico = db_get(f"HISTORICOS_DE_SORTEIOS/{nome_jogo}")
+    
+    # Se for esportiva ou sem histórico, gera aleatório inteligente
+    if config.get("tipo") == "esportiva":
+        palpites = {}
+        opcoes = ["1", "X", "2"] if api_nome == "loteca" else ["0x0", "1x0", "2x1", "1x1", "2x2"]
+        for i in range(1, 51):
+            palpites[f"jogo_{i:02d}"] = [random.choice(opcoes) for _ in range(config["jogos"])]
+        return palpites
+
     if not historico: return None
 
-    todas_bolas = []
-    inicio_bola = 0 if nome_jogo in ["LOTOMANIA", "SUPER-SETE"] else 1
-    fim_bola = 99 if nome_jogo == "LOTOMANIA" else (9 if nome_jogo == "SUPER-SETE" else config_jogo["total_bolas"])
-    atrasos = {i: 0 for i in range(inicio_bola, fim_bola + 1)}
-
-    concursos = sorted([int(k) for k in historico.keys()])
+    # Lógica de Quentes e Atrasadas
+    todas_dezenas = []
+    inicio = 0 if api_nome in ["lotomania", "supersete"] else 1
+    fim = 99 if api_nome == "lotomania" else (9 if api_nome == "supersete" else config["total_bolas"])
     
-    for num_conc in concursos:
-        dezenas = historico[str(num_conc)].get("dezenas", [])
-        todas_bolas.extend(dezenas)
-        for b in range(inicio_bola, fim_bola + 1):
-            if b in dezenas: atrasos[b] = 0
-            else: atrasos[b] += 1
+    concursos = sorted(historico.keys(), key=int)
+    atrasos = {i: 0 for i in range(inicio, fim + 1)}
 
-    frequencia = Counter(todas_bolas)
-    limite = max(1, int((fim_bola - inicio_bola + 1) * 0.2))
-    bolas_quentes = [b[0] for b in frequencia.most_common(limite)]
-    bolas_atrasadas = sorted(atrasos, key=atrasos.get, reverse=True)[:limite]
+    for c in concursos:
+        dzs = historico[c].get("dezenas", [])
+        todas_dezenas.extend(dzs)
+        for b in range(inicio, fim + 1):
+            atrasos[b] = 0 if b in dzs else atrasos[b] + 1
 
-    jogos_prontos = []
-    tentativas = 0
+    freq = Counter(todas_dezenas)
+    quentes = [b[0] for b in freq.most_common(int(config["total_bolas"]*0.4))]
+    atrasadas = sorted(atrasos, key=atrasos.get, reverse=True)[:int(config["total_bolas"]*0.3)]
     
-    while len(jogos_prontos) < 50 and tentativas < 1000:
-        tentativas += 1
-        novo_jogo = set()
-        qtd = config_jogo["sorteio"]
-        
-        novo_jogo.update(random.sample(bolas_quentes, min(max(1, int(qtd * 0.3)), len(bolas_quentes))))
-        disp_atr = [b for b in bolas_atrasadas if b not in novo_jogo]
-        novo_jogo.update(random.sample(disp_atr, min(max(1, int(qtd * 0.2)), len(disp_atr))))
-        
-        todas = list(range(inicio_bola, fim_bola + 1))
-        disp_todas = [b for b in todas if b not in novo_jogo]
-        falta = qtd - len(novo_jogo)
-        if falta > 0: novo_jogo.update(random.sample(disp_todas, falta))
-        
-        jogo_ord = sorted(list(novo_jogo))
-        if jogo_ord not in jogos_prontos: jogos_prontos.append(jogo_ord)
-
-    payload = {}
-    for i, jg in enumerate(jogos_prontos, 1):
-        payload[f"jogo_{i:02d}"] = [f"{b:02d}" if b < 10 else str(b) for b in jg]
-    return payload
-
-# =========================================================================
-# 4. FORÇAR CRIAÇÃO DAS ESTATÍSTICAS INICIAIS (A CORREÇÃO DO ERRO)
-# =========================================================================
-def forcar_criacao_estatisticas():
-    print("\n🛠️ VERIFICANDO SE A GAVETA 'ESTATISTICAS' EXISTE NO FIREBASE...")
-    for api_nome, config in JOGOS.items():
-        nome_jogo = config["nome"]
-        
-        # O robô olha no banco de dados
-        pasta_existe = db_get(f"ESTATISTICAS/{nome_jogo}/jogos_prontos")
-        
-        # Se a pasta não existir, ele vai ler o histórico que VOCÊ subiu e vai criar!
-        if not pasta_existe:
-            print(f"   ⚠️ Pasta ESTATISTICAS faltando para {nome_jogo}. Criando na marra agora!")
-            jogos_novos = calcular_estatisticas(nome_jogo, config)
-            if jogos_novos:
-                db_put(f"ESTATISTICAS/{nome_jogo}/jogos_prontos", jogos_novos)
-                print(f"   ✅ Pasta criada e 50 jogos salvos para {nome_jogo}!")
+    lista_final = {}
+    for i in range(1, 51):
+        if config.get("tipo") == "colunar": # Super Sete
+            jogo = [random.randint(0, 9) for _ in range(7)]
         else:
-            print(f"   ✔️ {nome_jogo}: A pasta ESTATISTICAS já está lá.")
+            qtd = config["gerar_qtd"]
+            # Mescla Quentes (40%), Atrasadas (30%) e Aleatórias (30%)
+            comb = set(random.sample(quentes, min(len(quentes), int(qtd*0.4))))
+            restante = [x for x in atrasadas if x not in comb]
+            comb.update(random.sample(restante, min(len(restante), int(qtd*0.3))))
+            
+            todos_disp = [x for x in range(inicio, fim + 1) if x not in comb]
+            comb.update(random.sample(todos_disp, qtd - len(comb)))
+            jogo = sorted(list(comb))
+        
+        # Formatação de +Milionária com trevos
+        if "trevos" in config:
+            trevos = sorted(random.sample(range(1, 7), 2))
+            lista_final[f"jogo_{i:02d}"] = {"numeros": [f"{x:02d}" for x in jogo], "trevos": [f"{x:02d}" for x in trevos]}
+        else:
+            lista_final[f"jogo_{i:02d}"] = [f"{x:02d}" for x in jogo]
+
+    return lista_final
 
 # =========================================================================
-# 5. O EFEITO DOMINÓ (A REAÇÃO EM CADEIA PARA NOVOS SORTEIOS)
+# 4. MOTOR DE ATUALIZAÇÃO (EFEITO DOMINÓ)
 # =========================================================================
-def executar_efeito_domino(api_nome, config_jogo, dados_api):
-    nome_jogo = config_jogo["nome"]
+def efeito_domino(api_nome, config, dados_api):
+    nome_jogo = config["nome"]
     num_conc = str(dados_api.get('concurso'))
-    print(f"\n🔥 [EFEITO DOMINÓ] -> {nome_jogo} (Concurso {num_conc})")
+    print(f"🚀 ATUALIZANDO: {nome_jogo} | Concurso: {num_conc}")
 
-    faixas_premio = []
-    for p in dados_api.get('premiacoes', []):
-        faixas_premio.append({
-            "faixa": str(p.get('descricao', '')),
-            "ganhadores": p.get('ganhadores', 0),
-            "valor": float(p.get('valorPremio', 0))
-        })
-
-    ficha_completa = {
+    # --- GAVETA 1: SORTEIO_DE_HOJE (Substituição) ---
+    ficha = {
         "numero": num_conc,
-        "data": str(dados_api.get('data', ''))[:10],
-        "dezenas": [int(x) for x in dados_api.get('dezenas', [])],
-        "premiacoes": faixas_premio,
+        "data": str(dados_api.get('data'))[:10],
+        "dezenas": dados_api.get('dezenas', []),
         "acumulou": "SIM" if dados_api.get('acumulou') else "NÃO",
-        "arrecadacao_total": float(dados_api.get('valorArrecadado', 0))
+        "premiacoes": dados_api.get('premiacoes', []),
+        "arrecadacao": dados_api.get('valorArrecadado', 0)
     }
+    # Campos Especiais
+    if "trevos" in config: ficha["trevos"] = dados_api.get("trevos")
+    if api_nome == "timemania": ficha["time_coracao"] = dados_api.get("time_do_coracao")
+    if api_nome == "diadesorte": ficha["mes_sorte"] = dados_api.get("mes_da_sorte")
 
-    if dados_api.get("trevos"): ficha_completa["trevos"] = [int(x) for x in dados_api["trevos"]]
-    if dados_api.get("time_do_coracao"): ficha_completa["time_do_coracao"] = dados_api["time_do_coracao"]
-    if dados_api.get("mes_da_sorte"): ficha_completa["mes_da_sorte"] = dados_api["mes_da_sorte"]
+    db_put(f"SORTEIO_DE_HOJE/{nome_jogo}", ficha)
 
-    db_put(f"SORTEIO_DE_HOJE/{nome_jogo}", ficha_completa)
-    db_patch(f"HISTORICOS_DE_SORTEIOS/{nome_jogo}", {num_conc: ficha_completa})
+    # --- GAVETA 2: HISTORICOS_DE_SORTEIOS (Acumulativo) ---
+    db_patch(f"HISTORICOS_DE_SORTEIOS/{nome_jogo}", {num_conc: ficha})
 
-    val_est = dados_api.get('valor_estimado_proximo_concurso', 0)
-    data_prox = str(dados_api.get('data_proximo_concurso', 'A definir'))
-    db_put(f"PROXIMO_CONCURSO/{nome_jogo}", {
+    # --- GAVETA 3: PROXIMO_CONCURSO (Limpeza e Troca) ---
+    proximo = {
         "numero_concurso": str(int(num_conc) + 1),
-        "data_proximo_sorteio": data_prox if data_prox else "A definir",
-        "estimativa_premio": formatar_moeda(val_est)
-    })
+        "data_proximo_sorteio": dados_api.get('data_proximo_concurso', 'A definir'),
+        "estimativa_premio": formatar_moeda(dados_api.get('valor_estimado_proximo_concurso', 0))
+    }
+    db_put(f"PROXIMO_CONCURSO/{nome_jogo}", proximo)
 
-    db_delete(f"ESTATISTICAS/{nome_jogo}/jogos_prontos")
-    jogos_novos = calcular_estatisticas(nome_jogo, config_jogo)
-    if jogos_novos:
-        db_put(f"ESTATISTICAS/{nome_jogo}/jogos_prontos", jogos_novos)
-    
-    print(f"🎯 SUCESSO ABSOLUTO! {nome_jogo} está 100% atualizado.")
+    # --- GAVETA 4: ESTATÍSTICAS (Faxina e Recálculo) ---
+    db_delete(f"ESTATISTICAS/{nome_jogo}") # Limpeza total antes
+    novos_palpites = gerar_50_jogos(api_nome, config)
+    if novos_palpites:
+        db_put(f"ESTATISTICAS/{nome_jogo}/jogos_prontos", novos_palpites)
+        print(f"📊 Estatísticas Recalculadas para {nome_jogo}")
 
 # =========================================================================
-# 6. O MOTOR PRINCIPAL DA NUVEM
+# 5. EXECUÇÃO PRINCIPAL
 # =========================================================================
-def rodar_robo_nuvem():
-    hoje_str = obter_data_hoje_brt()
-    print(f"📅 Data atual (Brasília): {hoje_str}")
-    
-    # 1º Passo: Força a criação das estatísticas se faltarem (A correção)
-    forcar_criacao_estatisticas()
-    
-    # 2º Passo: Segue a vida normal caçando sorteios novos
-    proximos = db_get("PROXIMO_CONCURSO") or {}
+def iniciar_robo():
+    print(f"🕒 Início da Rodada: {obter_data_brt()}")
     
     for api_nome, config in JOGOS.items():
-        nome_jogo = config["nome"]
-        data_marcada = proximos.get(nome_jogo, {}).get("data_proximo_sorteio", "")
-        
-        if data_marcada == hoje_str or "definir" in data_marcada.lower() or not data_marcada:
-            print(f"\n🔍 Verificando alvo: {nome_jogo}")
-            try:
-                res = requests.get(f"https://brasilapi.com.br/api/loterias/v1/{api_nome}", timeout=15)
-                if res.status_code == 200:
-                    dados_api = res.json()
-                    conc_api = str(dados_api.get('concurso'))
-                    
-                    vitrine = db_get(f"SORTEIO_DE_HOJE/{nome_jogo}")
-                    conc_vitrine = str(vitrine.get("numero", "")) if vitrine else ""
-                    
-                    if conc_api != conc_vitrine:
-                        executar_efeito_domino(api_nome, config, dados_api)
-                    else:
-                        print(f"   ⏳ Sem sorteio novo para {nome_jogo}.")
-            except Exception as e:
-                print(f"   🚨 Falha na API: {e}")
+        if config.get("tipo") == "esportiva": continue # BrasilAPI foca em loterias numéricas
 
-    print("\n🏁 TAREFA CONCLUÍDA! Desligando...")
+        try:
+            res = requests.get(f"https://brasilapi.com.br/api/loterias/v1/{api_nome}", timeout=20)
+            if res.status_code == 200:
+                dados = res.json()
+                conc_atual = str(dados.get('concurso'))
+                
+                # Verifica se já temos esse concurso no Hoje
+                hoje = db_get(f"SORTEIO_DE_HOJE/{config['nome']}")
+                if not hoje or str(hoje.get("numero")) != conc_atual:
+                    efeito_domino(api_nome, config, dados)
+                else:
+                    print(f"✔️ {config['nome']} já está atualizado.")
+        except Exception as e:
+            print(f"⚠️ Erro ao processar {api_nome}: {e}")
+
+    # Garante que ESTATISTICAS iniciais existam
+    for api_nome, config in JOGOS.items():
+        if not db_get(f"ESTATISTICAS/{config['nome']}/jogos_prontos"):
+            print(f"🛠️ Criando Estatísticas Iniciais para {config['nome']}")
+            p = gerar_50_jogos(api_nome, config)
+            if p: db_put(f"ESTATISTICAS/{config['nome']}/jogos_prontos", p)
 
 if __name__ == "__main__":
-    rodar_robo_nuvem()
+    iniciar_robo()
