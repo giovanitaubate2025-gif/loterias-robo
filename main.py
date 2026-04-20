@@ -1,171 +1,121 @@
-import pandas as pd
 import requests
-import os
+from datetime import datetime
 
 # =========================================================================
-# IMPORTADOR GG-456 (VERSÃO PARA CELULAR ANDROID)
-# Lê planilhas do armazenamento do celular e envia para a nuvem.
+# ROBÔ GG-456 OFICIAL (GITHUB ACTIONS)
+# Sincroniza dados da Caixa com o Firebase (Hoje, Histórico e Próximo)
 # =========================================================================
 
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 SECRET_FIREBASE = "7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd"
 
-MAPA_PASTAS = {
-    'Mega-Sena': 'MEGA-SENA',
-    'Lotofácil': 'LOTOFÁCIL',
-    'Quina': 'QUINA',
-    'Lotomania': 'LOTOMANIA',
-    'Timemania': 'TIMEMANIA',
-    '+Milionária': 'MAISMILIONÁRIA',
-    'Dia de Sorte': 'DIA_DE_SORTE',
-    'Dupla Sena': 'DUPLA_SENA',
-    'Super Sete': 'SUPER_SETE',
-    'Loteca': 'LOTECA',
-    'Federal': 'FEDERAL'
+# Mapa de comunicação: API da Caixa -> Nome da Pasta no seu Firebase
+JOGOS = {
+    'megasena': 'MEGA-SENA',
+    'lotofacil': 'LOTOFÁCIL',
+    'quina': 'QUINA',
+    'lotomania': 'LOTOMANIA',
+    'timemania': 'TIMEMANIA',
+    'maismilionaria': 'MAISMILIONÁRIA',
+    'diadesorte': 'DIA_DE_SORTE',
+    'duplasena': 'DUPLA_SENA',
+    'supersete': 'SUPER_SETE'
 }
 
-def enviar_lote(pasta_jogo, dados_lote):
-    url = f"{URL_FIREBASE}HISTORICOS_DE_SORTEIOS/{pasta_jogo}.json?auth={SECRET_FIREBASE}"
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+def enviar_firebase(caminho, dados, metodo="put"):
+    """ Envia os dados estruturados para a sua nuvem """
+    url = f"{URL_FIREBASE}{caminho}.json?auth={SECRET_FIREBASE}"
     try:
-        res = requests.patch(url, json=dados_lote, timeout=120)
+        if metodo == "put":
+            res = requests.put(url, json=dados, timeout=20)
+        else:
+            res = requests.patch(url, json=dados, timeout=20)
         return res.status_code == 200
     except Exception as e:
-        print(f"Erro de conexão: {e}")
+        log(f"Erro de conexão com Firebase: {e}")
         return False
 
-def limpar_dinheiro(valor):
-    if pd.isna(valor): return 0.0
-    if isinstance(valor, (int, float)): return float(valor)
+def formatar_moeda(valor):
+    """ Transforma números da API em formato de Reais legível (Opcional, pois a API já manda formatado às vezes) """
     try:
-        texto = str(valor).replace('R$', '').replace('.', '').replace(',', '.').strip()
-        return float(texto)
+        return f"R$ {float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     except:
-        return 0.0
+        return "R$ 0,00"
 
-def limpar_data(valor):
-    if pd.isna(valor): return ""
-    return str(valor)[:10].strip()
-
-def procurar_pasta():
-    print("==================================================")
-    print("🔍 BUSCADOR DE PLANILHAS (ANDROID)")
-    print("==================================================")
-    
-    # Caminhos comuns no Android
-    caminhos_comuns = [
-        '/storage/emulated/0/Download',
-        '/storage/emulated/0/Planilha',
-        '/storage/emulated/0/Download/Planilha',
-        '.'
-    ]
-    
-    for caminho in caminhos_comuns:
-        try:
-            arquivos = [f for f in os.listdir(caminho) if f.endswith('.xlsx') and not f.startswith('~')]
-            if arquivos:
-                print(f"✅ Planilhas encontradas na pasta: {caminho}")
-                return caminho, arquivos
-        except:
-            continue
-            
-    # Se não achou automático, pede para o usuário digitar
-    print("❌ Não achei as planilhas automaticamente.")
-    print("No seu print, parece estar em Cartão SD > Planilha.")
-    caminho_manual = input("Digite o caminho exato da pasta (ex: /storage/emulated/0/Planilha): ")
-    
+def buscar_caixa(jogo_api):
+    """ Pega o resultado ao vivo do site oficial da Caixa """
+    url = f"https://servicebus2.caixa.gov.br/portaldeloterias/api/{jogo_api}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
     try:
-        arquivos = [f for f in os.listdir(caminho_manual) if f.endswith('.xlsx') and not f.startswith('~')]
-        if arquivos:
-            return caminho_manual, arquivos
+        res = requests.get(url, headers=headers, timeout=20)
+        if res.status_code == 200:
+            return res.json()
     except Exception as e:
-        print(f"Erro ao acessar a pasta: {e}")
-        
-    return None, []
+        log(f"Erro ao buscar {jogo_api} na Caixa: {e}")
+    return None
 
-def executar_importacao():
-    caminho_base, arquivos = procurar_pasta()
-    
-    if not arquivos:
-        print("Nenhuma planilha .xlsx foi encontrada para importar.")
-        return
-        
-    print(f"\n🚀 INICIANDO IMPORTAÇÃO DE {len(arquivos)} ARQUIVOS...")
+def executar_robo():
+    log("🚀 INICIANDO ROBÔ DE SINCRONIZAÇÃO OFICIAL...")
 
-    for arquivo in arquivos:
-        nome_puro = arquivo.split('(')[0].replace('.xlsx', '').strip()
+    for api_id, pasta_firebase in JOGOS.items():
+        log(f"Processando jogo: {pasta_firebase}...")
         
-        if nome_puro in MAPA_PASTAS:
-            pasta_destino = MAPA_PASTAS[nome_puro]
-            caminho_completo = os.path.join(caminho_base, arquivo)
+        dados_caixa = buscar_caixa(api_id)
+        
+        if dados_caixa and 'numero' in dados_caixa:
+            concurso = str(dados_caixa['numero'])
             
-            print(f"\n📊 Lendo: {arquivo} -> Destino: HISTORICOS_DE_SORTEIOS/{pasta_destino}")
+            # 1. PREPARANDO PACOTE DO SORTEIO (Para HOJE e HISTÓRICO)
+            especial = dados_caixa.get('nomeTimeCoracao') or dados_caixa.get('nomeMesSorte') or ""
+            if dados_caixa.get('listaTrevos'): # Para +Milionária
+                especial = " - ".join([str(t) for t in dados_caixa['listaTrevos']])
+                
+            rateios = []
+            if dados_caixa.get('listaRateioPremio'):
+                for r in dados_caixa['listaRateioPremio']:
+                    rateios.append({
+                        "descricao": r.get('descricaoFaixa', ''),
+                        "valor": r.get('valorPremio', 0.0)
+                    })
+
+            pacote_sorteio = {
+                "numero": concurso,
+                "data": dados_caixa.get('dataApuracao', ''),
+                "dezenas": dados_caixa.get('listaDezenas', []),
+                "rateio": rateios,
+                "especial": especial,
+                "acumulou": "SIM" if dados_caixa.get('acumulado') else "NÃO"
+            }
+
+            # 2. PREPARANDO PACOTE DO PRÓXIMO CONCURSO
+            pacote_proximo = {
+                "numero_concurso": str(int(concurso) + 1),
+                "data_proximo_sorteio": dados_caixa.get('dataProximoConcurso', ''),
+                "valor_estimado": formatar_moeda(dados_caixa.get('valorEstimadoProximoConcurso', 0.0))
+            }
+
+            # ====== DISPARANDO PARA AS 3 PASTAS DA NUVEM ======
             
-            try:
-                df = pd.read_excel(caminho_completo)
-                coluna_concurso = df.columns[0]
-                df = df.dropna(subset=[coluna_concurso])
-                
-                pacote_concursos = {}
-                
-                for _, linha in df.iterrows():
-                    try:
-                        concurso_str = str(int(linha[coluna_concurso]))
-                    except ValueError:
-                        continue 
+            # A. Atualiza SORTEIO DE HOJE (Substitui)
+            enviar_firebase(f"SORTEIO_DE_HOJE/{pasta_firebase}", pacote_sorteio, "put")
+            
+            # B. Salva no HISTÓRICO (Adiciona/Substitui o concurso específico)
+            enviar_firebase(f"HISTORICOS_DE_SORTEIOS/{pasta_firebase}/{concurso}", pacote_sorteio, "put")
+            
+            # C. Atualiza PRÓXIMO CONCURSO (Substitui com a estimativa nova)
+            enviar_firebase(f"PROXIMO_CONCURSO/{pasta_firebase}", pacote_proximo, "put")
+            
+            log(f"✅ {pasta_firebase} sincronizado com sucesso! (Concurso {concurso})")
+        else:
+            log(f"⚠️ Dados não encontrados para {pasta_firebase} no momento.")
 
-                    # 1. DEZENAS
-                    dezenas = []
-                    for col in df.columns:
-                        col_l = str(col).lower()
-                        if 'bola' in col_l or 'd' in col_l or col_l.isdigit():
-                            val = linha[col]
-                            if pd.notna(val) and str(val).replace('.0','').isdigit():
-                                dezenas.append(int(val))
-                    
-                    # 2. RATEIO
-                    rateios = []
-                    for col in df.columns:
-                        col_l = str(col).lower()
-                        if any(palavra in col_l for palavra in ['valor', 'premio', 'rateio', 'pago']):
-                            rateios.append({
-                                "faixa": str(col),
-                                "valor": limpar_dinheiro(linha[col])
-                            })
-                    
-                    # 3. ESPECIAL
-                    especial = ""
-                    for col in df.columns:
-                        col_l = str(col).lower()
-                        if any(palavra in col_l for palavra in ['time', 'coracao', 'trevo', 'mês', 'mes']):
-                            if pd.notna(linha[col]):
-                                especial = str(linha[col])
-
-                    # 4. ACUMULOU
-                    acumulou = "NÃO"
-                    for col in df.columns:
-                        if 'acumulad' in str(col).lower():
-                            if pd.notna(linha[col]) and "sim" in str(linha[col]).lower():
-                                acumulou = "SIM"
-                    
-                    pacote_concursos[concurso_str] = {
-                        "data": limpar_data(linha.get('Data', linha.get('Data Sorteio', ""))),
-                        "dezenas": dezenas,
-                        "rateio": rateios,
-                        "especial": especial,
-                        "acumulou": acumulou
-                    }
-
-                print(f"Subindo {len(pacote_concursos)} concursos. Aguarde...")
-                
-                if enviar_lote(pasta_destino, pacote_concursos):
-                    print(f"✅ SUCESSO! {pasta_destino} atualizada.")
-                else:
-                    print(f"❌ ERRO: Falha ao subir {pasta_destino}.")
-
-            except Exception as e:
-                print(f"❌ Erro crítico ao ler a planilha {arquivo}: {e}")
-
-    print("\n🎉 IMPORTAÇÃO GERAL CONCLUÍDA! Seu Firebase está abastecido.")
+    log("🏁 CICLO FINALIZADO. Nuvem 100% atualizada de acordo com as regras.")
 
 if __name__ == "__main__":
-    executar_importacao()
+    executar_robo()
