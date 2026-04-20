@@ -2,195 +2,225 @@ import requests
 import json
 import os
 import random
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from collections import Counter
+
+# Desativa avisos de SSL para garantir que o robô não pare em redes móveis
+requests.packages.urllib3.disable_warnings()
 
 # =========================================================================
 # 1. CONFIGURAÇÕES E CREDENCIAIS
 # =========================================================================
-# O segredo vem do GitHub Actions ou da variável de ambiente
 SECRET_FIREBASE = os.environ.get('FIREBASE_KEY', '7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd')
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 
-# Configuração detalhada conforme pedido
 JOGOS = {
-    "megasena": {"nome": "MEGA-SENA", "total_bolas": 60, "sorteio_api": 6, "gerar_qtd": 6},
-    "lotofacil": {"nome": "LOTOFACIL", "total_bolas": 25, "sorteio_api": 15, "gerar_qtd": 15},
-    "quina": {"nome": "QUINA", "total_bolas": 80, "sorteio_api": 5, "gerar_qtd": 5},
-    "lotomania": {"nome": "LOTOMANIA", "total_bolas": 100, "sorteio_api": 20, "gerar_qtd": 50},
-    "timemania": {"nome": "TIMEMANIA", "total_bolas": 80, "sorteio_api": 7, "gerar_qtd": 10},
-    "diadesorte": {"nome": "DIA-DE-SORTE", "total_bolas": 31, "sorteio_api": 7, "gerar_qtd": 7},
-    "maismilionaria": {"nome": "MAIS-MILIONARIA", "total_bolas": 50, "sorteio_api": 6, "gerar_qtd": 6, "trevos": 2},
-    "duplasena": {"nome": "DUPLA-SENA", "total_bolas": 50, "sorteio_api": 6, "gerar_qtd": 6},
-    "supersete": {"nome": "SUPER-SETE", "total_bolas": 9, "sorteio_api": 7, "gerar_qtd": 7, "tipo": "colunar"},
-    "loteca": {"nome": "LOTECA", "tipo": "esportiva", "jogos": 14},
-    "lotogol": {"nome": "LOTOGOL", "tipo": "esportiva", "jogos": 5}
+    "megasena": {"nome": "MEGA-SENA", "qtd": 6, "total": 60},
+    "lotofacil": {"nome": "LOTOFACIL", "qtd": 15, "total": 25},
+    "quina": {"nome": "QUINA", "qtd": 5, "total": 80},
+    "lotomania": {"nome": "LOTOMANIA", "qtd": 50, "total": 100},
+    "timemania": {"nome": "TIMEMANIA", "qtd": 10, "total": 80},
+    "diadesorte": {"nome": "DIA-DE-SORTE", "qtd": 7, "total": 31},
+    "maismilionaria": {"nome": "MAIS-MILIONARIA", "qtd": 6, "total": 50, "trevos": 2},
+    "duplasena": {"nome": "DUPLA-SENA", "qtd": 6, "total": 50},
+    "supersete": {"nome": "SUPER-SETE", "qtd": 7, "total": 9, "tipo": "colunar"}
+}
+
+# Cabeçalhos para simular um navegador real e evitar bloqueios
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://loterias.caixa.gov.br/",
+    "Accept-Language": "pt-BR,pt;q=0.9"
 }
 
 # =========================================================================
-# 2. UTILITÁRIOS E CONEXÃO FIREBASE
+# 2. FUNÇÕES FIREBASE (AS GAVETAS BLINDADAS)
 # =========================================================================
-def db_get(caminho):
-    url = f"{URL_FIREBASE}{caminho}.json?auth={SECRET_FIREBASE}"
+def db_call(method, path, data=None):
+    url = f"{URL_FIREBASE}{path}.json?auth={SECRET_FIREBASE}"
     try:
-        res = requests.get(url, timeout=20)
-        return res.json() if res.status_code == 200 else None
+        if method == "GET": return requests.get(url, timeout=20).json()
+        if method == "PUT": return requests.put(url, json=data, timeout=20)
+        if method == "PATCH": return requests.patch(url, json=data, timeout=20)
+        if method == "DELETE": return requests.delete(url, timeout=20)
     except: return None
 
-def db_put(caminho, dados):
-    url = f"{URL_FIREBASE}{caminho}.json?auth={SECRET_FIREBASE}"
-    try: requests.put(url, json=dados, timeout=20)
-    except: pass
-
-def db_patch(caminho, dados):
-    url = f"{URL_FIREBASE}{caminho}.json?auth={SECRET_FIREBASE}"
-    try: requests.patch(url, json=dados, timeout=20)
-    except: pass
-
-def db_delete(caminho):
-    url = f"{URL_FIREBASE}{caminho}.json?auth={SECRET_FIREBASE}"
-    try: requests.delete(url, timeout=20)
-    except: pass
-
-def formatar_moeda(valor):
-    try:
-        return f"R$ {float(valor):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+def formatar_moeda(v):
+    try: return f"R$ {float(v):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
     except: return "R$ 0,00"
 
-def obter_data_brt():
-    return (datetime.utcnow() - timedelta(hours=3)).strftime("%d/%m/%Y")
-
 # =========================================================================
-# 3. CÉREBRO DE ESTATÍSTICAS (GERADOR DE PALPITES)
+# 3. O CÉREBRO MATEMÁTICO (GERADOR DE 50 PALPITES)
 # =========================================================================
-def gerar_50_jogos(api_nome, config):
-    nome_jogo = config["nome"]
-    historico = db_get(f"HISTORICOS_DE_SORTEIOS/{nome_jogo}")
+def gerar_50_estatisticas(slug, config):
+    nome = config["nome"]
+    hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}")
     
-    # Se for esportiva ou sem histórico, gera aleatório inteligente
-    if config.get("tipo") == "esportiva":
-        palpites = {}
-        opcoes = ["1", "X", "2"] if api_nome == "loteca" else ["0x0", "1x0", "2x1", "1x1", "2x2"]
-        for i in range(1, 51):
-            palpites[f"jogo_{i:02d}"] = [random.choice(opcoes) for _ in range(config["jogos"])]
-        return palpites
+    # Tratamento de erro de estrutura do Firebase
+    data_h = {}
+    if isinstance(hist, list):
+        data_h = {str(i): v for i, v in enumerate(hist) if v}
+    elif isinstance(hist, dict):
+        data_h = hist
 
-    if not historico: return None
-
-    # Lógica de Quentes e Atrasadas
-    todas_dezenas = []
-    inicio = 0 if api_nome in ["lotomania", "supersete"] else 1
-    fim = 99 if api_nome == "lotomania" else (9 if api_nome == "supersete" else config["total_bolas"])
+    todas_dz = []
+    for c in data_h.values():
+        todas_dz.extend(c.get("dezenas", []))
     
-    concursos = sorted(historico.keys(), key=int)
-    atrasos = {i: 0 for i in range(inicio, fim + 1)}
-
-    for c in concursos:
-        dzs = historico[c].get("dezenas", [])
-        todas_dezenas.extend(dzs)
-        for b in range(inicio, fim + 1):
-            atrasos[b] = 0 if b in dzs else atrasos[b] + 1
-
-    freq = Counter(todas_dezenas)
-    quentes = [b[0] for b in freq.most_common(int(config["total_bolas"]*0.4))]
-    atrasadas = sorted(atrasos, key=atrasos.get, reverse=True)[:int(config["total_bolas"]*0.3)]
+    freq = Counter(todas_dz)
+    quentes = [x[0] for x in freq.most_common(25)]
     
-    lista_final = {}
+    inicio = 0 if slug in ["lotomania", "supersete"] else 1
+    fim = 99 if slug == "lotomania" else (9 if slug == "supersete" else config.get("total", 60))
+    
+    resultado = {}
     for i in range(1, 51):
-        if config.get("tipo") == "colunar": # Super Sete
-            jogo = [random.randint(0, 9) for _ in range(7)]
+        qtd = config.get("qtd", 6)
+        if config.get("tipo", "") == "colunar":
+            jg = [random.randint(0, 9) for _ in range(7)]
         else:
-            qtd = config["gerar_qtd"]
-            # Mescla Quentes (40%), Atrasadas (30%) e Aleatórias (30%)
-            comb = set(random.sample(quentes, min(len(quentes), int(qtd*0.4))))
-            restante = [x for x in atrasadas if x not in comb]
-            comb.update(random.sample(restante, min(len(restante), int(qtd*0.3))))
-            
-            todos_disp = [x for x in range(inicio, fim + 1) if x not in comb]
-            comb.update(random.sample(todos_disp, qtd - len(comb)))
-            jogo = sorted(list(comb))
+            # Lógica: Mistura entre quentes (40%) e aleatórias
+            pool = set(random.sample(quentes, min(len(quentes), int(qtd * 0.4))) if quentes else [])
+            while len(pool) < qtd: pool.add(random.randint(inicio, fim))
+            jg = sorted(list(pool))
         
-        # Formatação de +Milionária com trevos
         if "trevos" in config:
-            trevos = sorted(random.sample(range(1, 7), 2))
-            lista_final[f"jogo_{i:02d}"] = {"numeros": [f"{x:02d}" for x in jogo], "trevos": [f"{x:02d}" for x in trevos]}
+            t = sorted(random.sample(range(1, 7), 2))
+            resultado[f"jogo_{i:02d}"] = {"numeros": [f"{x:02d}" for x in jg], "trevos": [f"{x:02d}" for x in t]}
         else:
-            lista_final[f"jogo_{i:02d}"] = [f"{x:02d}" for x in jogo]
-
-    return lista_final
-
-# =========================================================================
-# 4. MOTOR DE ATUALIZAÇÃO (EFEITO DOMINÓ)
-# =========================================================================
-def efeito_domino(api_nome, config, dados_api):
-    nome_jogo = config["nome"]
-    num_conc = str(dados_api.get('concurso'))
-    print(f"🚀 ATUALIZANDO: {nome_jogo} | Concurso: {num_conc}")
-
-    # --- GAVETA 1: SORTEIO_DE_HOJE (Substituição) ---
-    ficha = {
-        "numero": num_conc,
-        "data": str(dados_api.get('data'))[:10],
-        "dezenas": dados_api.get('dezenas', []),
-        "acumulou": "SIM" if dados_api.get('acumulou') else "NÃO",
-        "premiacoes": dados_api.get('premiacoes', []),
-        "arrecadacao": dados_api.get('valorArrecadado', 0)
-    }
-    # Campos Especiais
-    if "trevos" in config: ficha["trevos"] = dados_api.get("trevos")
-    if api_nome == "timemania": ficha["time_coracao"] = dados_api.get("time_do_coracao")
-    if api_nome == "diadesorte": ficha["mes_sorte"] = dados_api.get("mes_da_sorte")
-
-    db_put(f"SORTEIO_DE_HOJE/{nome_jogo}", ficha)
-
-    # --- GAVETA 2: HISTORICOS_DE_SORTEIOS (Acumulativo) ---
-    db_patch(f"HISTORICOS_DE_SORTEIOS/{nome_jogo}", {num_conc: ficha})
-
-    # --- GAVETA 3: PROXIMO_CONCURSO (Limpeza e Troca) ---
-    proximo = {
-        "numero_concurso": str(int(num_conc) + 1),
-        "data_proximo_sorteio": dados_api.get('data_proximo_concurso', 'A definir'),
-        "estimativa_premio": formatar_moeda(dados_api.get('valor_estimado_proximo_concurso', 0))
-    }
-    db_put(f"PROXIMO_CONCURSO/{nome_jogo}", proximo)
-
-    # --- GAVETA 4: ESTATÍSTICAS (Faxina e Recálculo) ---
-    db_delete(f"ESTATISTICAS/{nome_jogo}") # Limpeza total antes
-    novos_palpites = gerar_50_jogos(api_nome, config)
-    if novos_palpites:
-        db_put(f"ESTATISTICAS/{nome_jogo}/jogos_prontos", novos_palpites)
-        print(f"📊 Estatísticas Recalculadas para {nome_jogo}")
+            resultado[f"jogo_{i:02d}"] = [f"{x:02d}" for x in jg]
+            
+    return resultado
 
 # =========================================================================
-# 5. EXECUÇÃO PRINCIPAL
+# 4. CAPTURA TRIPLA (CAIXA -> BRASIL API -> ESPELHO INDEPENDENTE)
 # =========================================================================
-def iniciar_robo():
-    print(f"🕒 Início da Rodada: {obter_data_brt()}")
+def buscar_dados_loteria(slug):
+    # Fonte 1: API Oficial da Caixa (ServiceBus)
+    print(f"   🔎 Tentando Caixa Oficial...")
+    try:
+        url = f"https://servicebus2.caixa.gov.br/loterias/api/{slug}"
+        res = requests.get(url, headers=HEADERS, verify=False, timeout=15)
+        if res.status_code == 200:
+            d = res.json()
+            return {
+                "conc": str(d.get("numero")), "data": d.get("dataApuracao"),
+                "dzs": [int(x) for x in d.get("listaDezenas", [])],
+                "acum": d.get("acumulado"), "arrec": d.get("valorArrecadado", 0),
+                "rates": d.get("listaRateioPremio", []),
+                "p_conc": str(d.get("numeroFinalConcursoPróximo")),
+                "p_data": d.get("dataPróximoConcurso"),
+                "p_est": d.get("valorEstimadoPróximoConcurso", 0),
+                "t": d.get("dezenasSorteioOrdemCrescente", [])[6:] if slug == "maismilionaria" else None,
+                "extra": d.get("nomeTimeCoracaoMessorte")
+            }
+    except: pass
+
+    # Fonte 2: Brasil API (Fallback)
+    print(f"   🔎 Tentando Brasil API...")
+    try:
+        url = f"https://brasilapi.com.br/api/loterias/v1/{slug}"
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            d = res.json()
+            return {
+                "conc": str(d.get("concurso")), "data": d.get("data"),
+                "dzs": [int(x) for x in d.get("dezenas", [])],
+                "acum": d.get("acumulou"), "arrec": d.get("valor_arrecadado", 0),
+                "rates": d.get("premiacoes", []),
+                "p_conc": str(int(d.get("concurso")) + 1),
+                "p_data": d.get("data_proximo_concurso"),
+                "p_est": d.get("valor_estimado_proximo_concurso", 0),
+                "t": d.get("trevos") if slug == "maismilionaria" else None,
+                "extra": d.get("time_do_coracao") or d.get("mes_da_sorte")
+            }
+    except: pass
+
+    # Fonte 3: API de Espelho (Independente) - NOVO!
+    print(f"   🔎 Tentando API de Espelho (Mirror)...")
+    try:
+        url = f"https://loteriascaixa-api.herokuapp.com/api/{slug}/latest"
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            d = res.json()
+            return {
+                "conc": str(d.get("concurso")), "data": d.get("data"),
+                "dzs": [int(x) for x in d.get("dezenas", [])],
+                "acum": d.get("acumulou"), "arrec": d.get("valor_arrecadado", 0),
+                "rates": d.get("premiacoes", []),
+                "p_conc": str(int(d.get("concurso")) + 1),
+                "p_data": d.get("data_proximo_concurso"),
+                "p_est": d.get("valor_estimado_proximo_concurso", 0),
+                "t": d.get("trevos") if slug == "maismilionaria" else None,
+                "extra": d.get("time_do_coracao") or d.get("mes_da_sorte")
+            }
+    except: pass
     
-    for api_nome, config in JOGOS.items():
-        if config.get("tipo") == "esportiva": continue # BrasilAPI foca em loterias numéricas
+    return None
 
-        try:
-            res = requests.get(f"https://brasilapi.com.br/api/loterias/v1/{api_nome}", timeout=20)
-            if res.status_code == 200:
-                dados = res.json()
-                conc_atual = str(dados.get('concurso'))
-                
-                # Verifica se já temos esse concurso no Hoje
-                hoje = db_get(f"SORTEIO_DE_HOJE/{config['nome']}")
-                if not hoje or str(hoje.get("numero")) != conc_atual:
-                    efeito_domino(api_nome, config, dados)
-                else:
-                    print(f"✔️ {config['nome']} já está atualizado.")
-        except Exception as e:
-            print(f"⚠️ Erro ao processar {api_nome}: {e}")
+# =========================================================================
+# 5. O EFEITO DOMINÓ (DISTRIBUIÇÃO EM 4 FRENTES)
+# =========================================================================
+def processar_vitoria(slug, config, d):
+    nome = config["nome"]
+    c = d["conc"]
+    print(f"   🚀 ATUALIZANDO: {nome} (Conc. {c})")
 
-    # Garante que ESTATISTICAS iniciais existam
-    for api_nome, config in JOGOS.items():
-        if not db_get(f"ESTATISTICAS/{config['nome']}/jogos_prontos"):
-            print(f"🛠️ Criando Estatísticas Iniciais para {config['nome']}")
-            p = gerar_50_jogos(api_nome, config)
-            if p: db_put(f"ESTATISTICAS/{config['nome']}/jogos_prontos", p)
+    # [GAVETA 1] HOJE
+    ficha_hoje = {
+        "numero": c, "data": d["data"], "dezenas": d["dzs"],
+        "acumulou": "SIM" if d["acum"] else "NÃO",
+        "arrecadacao": d["arrec"], "premiacoes": d["rates"]
+    }
+    db_call("PUT", f"SORTEIO_DE_HOJE/{nome}", ficha_hoje)
+
+    # [GAVETA 2] HISTÓRICO
+    ficha_hist = ficha_hoje.copy()
+    if d["t"]: ficha_hist["trevos"] = d["t"]
+    if d["extra"]: ficha_hist["informacao_extra"] = d["extra"]
+    db_call("PATCH", f"HISTORICOS_DE_SORTEIOS/{nome}", {c: ficha_hist})
+
+    # [GAVETA 3] PRÓXIMO
+    ficha_prox = {
+        "numero_concurso": d["p_conc"], "data_proximo_sorteio": d["p_data"] or "A definir",
+        "estimativa_premio": formatar_moeda(d["p_est"])
+    }
+    db_call("PUT", f"PROXIMO_CONCURSO/{nome}", ficha_prox)
+
+    # [GAVETA 4] ESTATÍSTICAS (Faxina Completa)
+    db_call("DELETE", f"ESTATÍSTICAS/{nome}")
+    time.sleep(1)
+    p = gerar_50_estatisticas(slug, config)
+    db_call("PUT", f"ESTATÍSTICAS/{nome}/jogos_prontos", p)
+    print(f"   ✅ Blindagem completa.")
+
+# =========================================================================
+# 6. EXECUÇÃO
+# =========================================================================
+def main():
+    agora = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%d/%m/%Y %H:%M")
+    print(f"=============================================================")
+    print(f"🤖 ROBÔ NUVEM BLINDADA (TRIPLA FONTE) - {agora}")
+    print(f"=============================================================")
+
+    for slug, config in JOGOS.items():
+        print(f"🔎 Verificando {config['nome']}...")
+        dados = buscar_dados_loteria(slug)
+        
+        if dados:
+            hoje_db = db_call("GET", f"SORTEIO_DE_HOJE/{config['nome']}")
+            conc_banco = str(hoje_db.get("numero", "")) if hoje_db else ""
+            
+            if dados["conc"] != conc_banco:
+                processar_vitoria(slug, config, dados)
+            else:
+                print(f"   ✔️ Sincronizado (Conc. {dados['conc']}).")
+        else:
+            print(f"   🚨 FALHA TOTAL em todas as fontes para {config['nome']}.")
+
+    print(f"\n🏁 CICLO FINALIZADO.")
 
 if __name__ == "__main__":
-    iniciar_robo()
+    main()
