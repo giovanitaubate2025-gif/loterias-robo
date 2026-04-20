@@ -2,7 +2,7 @@ name: Robo Loterias Nuvem Blindada
 
 on:
   schedule:
-    # Cronograma conforme solicitado (Horários UTC, ajustados para BRT -3h)
+    # Cronograma (Horários UTC, ajustados para BRT -3h)
     - cron: '0 19 * * *'  # 16:00 BRT
     - cron: '30 0 * * *'  # 21:30 BRT
     - cron: '0 1 * * *'   # 22:00 BRT
@@ -13,6 +13,10 @@ on:
 jobs:
   executar-processamento:
     runs-on: ubuntu-latest
+    # ESSA LINHA ABAIXO RESOLVE O AVISO DO NODE.JS 20
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      
     steps:
       - name: Checkout do Código
         uses: actions/checkout@v4
@@ -28,5 +32,4 @@ jobs:
       - name: Rodar Motor Principal
         run: python main.py
         env:
-          # Adicione o segredo no GitHub: Settings > Secrets > Actions
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
