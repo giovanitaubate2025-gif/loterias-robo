@@ -62,7 +62,43 @@ def extrair_id_limpo(valor):
     return str(int(match.group())) if match else None
 
 # =========================================================================
-# 3. MOTOR 6: MACHINE LEARNING (O ALGORITMO PAI QUE APRENDE)
+# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP (NOVO)
+# =========================================================================
+def preparar_infraestrutura_frontend():
+    """
+    Cria as gavetas na nuvem para as novas funções visuais e de segurança 
+    do aplicativo (Bolões, Cadastro, Cores Metálicas, Imagem de Fundo).
+    """
+    print("   ⚙️ Verificando infraestrutura de Design e Segurança do App...")
+    
+    # 1. Configurações Visuais e de Botões
+    config_atual = db_call("GET", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL")
+    if not config_atual:
+        config_padrao = {
+            "tema_metalico": "padrao", # opções: ouro, prata, azul_royal, preto_carbono, padrao
+            "usar_cores_manuais": False,
+            "cor_texto_btn": "#ffffff",
+            "cor_fundo_btn1": "#31006F",
+            "cor_fundo_btn2": "#f39c12",
+            "imagem_fundo_url": "", # Link da imagem que vai cobrir 100% da tela
+            "boloes_status": "oculto", # opções: oculto, visivel, bloqueado, senha, cadastro
+            "boloes_link": "https://seulinkpopular.com",
+            "boloes_senha": "",
+            "rodape_ativo": False,
+            "rodape_texto": "Gerador Oficial Inteligente - Boa Sorte!"
+        }
+        db_call("PUT", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL", config_padrao)
+        print("   ✅ Gavetas de Configuração Visual e Bolões criadas com sucesso!")
+
+    # 2. Pasta de Cadastro de Clientes Exclusiva
+    cadastros = db_call("GET", "CADASTRO_DE_CLIENTES")
+    if cadastros is None:
+        # Inicializa a pasta vazia para evitar erros no aplicativo
+        db_call("PUT", "CADASTRO_DE_CLIENTES/info_sistema", {"criado_por": "Robô IA Trator", "status": "Pronto para receber cadastros"})
+        print("   ✅ Pasta de Cadastro de Clientes blindada e pronta!")
+
+# =========================================================================
+# 4. MOTOR 6: MACHINE LEARNING (O ALGORITMO PAI QUE APRENDE)
 # =========================================================================
 def auditar_e_aprender(config, dezenas_reais):
     nome = config["nome"]
@@ -104,13 +140,12 @@ def auditar_e_aprender(config, dezenas_reais):
     return pesos_atuais
 
 # =========================================================================
-# 4. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA E MONTAGEM)
+# 5. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA E MONTAGEM)
 # =========================================================================
 def motor_ia_profunda(slug, config, pesos_cognitivos):
     nome = config["nome"]
     print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas (Análise Global)...")
     
-    # MOTOR 1: VARREDURA HISTÓRICA TOTAL E GLOBAL (Lê tudo)
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}")
     if not hist: return {}
     dados_h = hist if isinstance(hist, dict) else {str(i): v for i, v in enumerate(hist) if v}
@@ -126,7 +161,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         if not concurso: continue
         
         dzs_int = []
-        # AUTO-CURA EM MEMÓRIA: Se for o formato velho/sujo do Excel, converte em tempo real
         if isinstance(concurso, dict) and "Bola1" in concurso:
             for i in range(1, 100):
                 b_chave = f"Bola{i}"
@@ -134,7 +168,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
                     try: dzs_int.append(int(concurso[b_chave]))
                     except: pass
         else:
-            # Formato limpo atual
             dzs = concurso.get("dezenas", [])
             dzs_int = [int(x) for x in dzs] if dzs else []
             
@@ -213,39 +246,28 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     return palpites
 
 # =========================================================================
-# 5. O TRATOR DE VISTORIA (INSPETOR IMPLACÁVEL DE ERROS DA NUVEM)
+# 6. O TRATOR DE VISTORIA (INSPETOR IMPLACÁVEL DE ERROS DA NUVEM)
 # =========================================================================
 def banco_esta_incompleto(nome_jogo, slug, conc_api):
-    """
-    Fiscaliza a nuvem com rigor militar. Se faltar a data, se faltar
-    o Time do Coração, ou se tiver Lixo (Bola1), ele força a exclusão
-    e baixa tudo novo direto da Caixa.
-    """
     hoje = db_call("GET", f"SORTEIO_DE_HOJE/{nome_jogo}")
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome_jogo}/{conc_api}")
     
-    # 1. Se a gaveta de hoje ou o histórico não tem esse concurso, está incompleto
     if not hoje or str(hoje.get("numero")) != str(conc_api): return True
     if not hist: return True
 
-    # 2. Vistoria Profunda nos dois arquivos (Hoje e Histórico)
     for base in [hoje, hist]:
-        # Falta a Data?
         if not base.get("data") or base.get("data") == "":
             print(f"   🔍 Inspetor: 'Data' em branco em {nome_jogo}. Corrigindo banco...")
             return True
             
-        # Faltam as Premiações da Caixa?
         if not base.get("premiacoes") or len(base.get("premiacoes")) == 0:
             print(f"   🔍 Inspetor: Tabela de 'Premiações' vazia em {nome_jogo}.")
             return True
             
-        # Tem Lixo Antigo do Excel? (Bola1, Bola2...)
         if "Bola1" in base or "Cidade UF" in base:
             print(f"   🔍 Inspetor: Lixo antigo do Excel detectado em {nome_jogo}.")
             return True
             
-        # Regras Específicas por Jogo!
         if slug == "timemania" and not base.get("timeCoracao"):
             print(f"   🔍 Inspetor: Falta o 'Time do Coração' na Timemania!")
             return True
@@ -261,7 +283,7 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
     return False
 
 # =========================================================================
-# 6. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA (TIMES E TREVOS)
+# 7. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA (TIMES E TREVOS)
 # =========================================================================
 def buscar_dados_loteria(slug):
     fontes = [
@@ -281,7 +303,6 @@ def buscar_dados_loteria(slug):
                 p_data = d.get("dataPróximoConcurso") or d.get("dataProximoConcurso") or d.get("data_proximo_concurso", "")
                 p_est = d.get("valorEstimadoPróximoConcurso") or d.get("valorEstimadoProximoConcurso") or d.get("valor_estimado_proximo_concurso", 0)
                 
-                # --- CAPTURA DE VARIÁVEIS ESPECÍFICAS (A RAIZ DO SEU PROBLEMA FOI RESOLVIDA AQUI) ---
                 extra_str = ""
                 trevos_lista = []
                 
@@ -305,7 +326,7 @@ def buscar_dados_loteria(slug):
     return None
 
 # =========================================================================
-# 7. EFEITO DOMINÓ (ROTEAMENTO E DISTRIBUIÇÃO BLINDADOS)
+# 8. EFEITO DOMINÓ (ROTEAMENTO E DISTRIBUIÇÃO BLINDADOS)
 # =========================================================================
 def efeito_domino(slug, config, d):
     nome = config["nome"]
@@ -314,14 +335,12 @@ def efeito_domino(slug, config, d):
 
     pesos_calibrados = auditar_e_aprender(config, d["dzs"])
 
-    # 📦 PACOTE 1: PRESENTE E PASSADO (A Ficha Perfeita)
     ficha_base = {
         "numero": c_id, "data": d["data"], "dezenas": d["dzs"],
         "acumulou": "SIM" if d["acum"] else "NÃO",
         "arrecadacao": d["arrec"], "premiacoes": d["rates"]
     }
     
-    # Insere as chaves exclusivas se existirem
     if slug == "timemania":
         ficha_base["timeCoracao"] = d.get("extra", "")
     elif slug == "diadesorte":
@@ -329,19 +348,13 @@ def efeito_domino(slug, config, d):
     elif slug == "maismilionaria":
         ficha_base["trevos"] = d.get("trevos", [])
 
-    # SUBSTITUI TUDO EM SORTEIO_DE_HOJE
     db_call("PUT", f"SORTEIO_DE_HOJE/{nome}", ficha_base)
-    
-    # O SEGREDO DA LIMPEZA: Usamos PUT aqui. Isso OBLITERA todo o lixo do Excel ("Bola1", etc) 
-    # e subscreve com a ficha 100% perfeita que o robô acabou de criar!
     db_call("PUT", f"HISTORICOS_DE_SORTEIOS/{nome}/{c_id}", ficha_base)
 
-    # 📦 PACOTE 2: FUTURO
     texto_estimativa = f"Estimativa de prêmio do próximo concurso {d['p_data']}" if d.get('p_data') else "Estimativa de prêmio do próximo concurso a definir"
     ficha_prox = {"texto_data": texto_estimativa, "valor_estimativa": formatar_moeda(d["p_est"])}
     db_call("PUT", f"PROXIMO_CONCURSO/{nome}", ficha_prox)
 
-    # 📦 PACOTE 3: GERAÇÃO DA IA
     db_call("DELETE", f"ESTATISTICAS/{nome}")
     time.sleep(2) 
     
@@ -349,7 +362,7 @@ def efeito_domino(slug, config, d):
     db_call("PUT", f"ESTATISTICAS/{nome}/jogos_prontos", palpites_novos)
 
 # =========================================================================
-# 8. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
+# 9. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
 # =========================================================================
 def main():
     agora_br = datetime.now(timezone.utc) - timedelta(hours=3)
@@ -357,6 +370,9 @@ def main():
     print(f"=============================================================")
     print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA (INSPETOR) - {agora_br.strftime('%d/%m/%Y %H:%M')}")
     print(f"=============================================================")
+
+    # EXECUTANDO A PREPARAÇÃO DO NOVO APLICATIVO ANTES DE QUALQUER COISA
+    preparar_infraestrutura_frontend()
 
     if hora == 9:
         print("🌅 Repescagem das 09h. Parada Segura Ativa (Evitando Loop de Falha da Caixa).")
@@ -366,7 +382,6 @@ def main():
         dados = buscar_dados_loteria(slug)
         
         if dados:
-            # O Trator passa aqui: ele olha a nuvem, se tiver lixo ou dados faltando, aciona o efeito dominó
             if banco_esta_incompleto(config["nome"], slug, dados["conc"]):
                 efeito_domino(slug, config, dados)
                 print(f"   ✅ Sucesso: Lixo excluído! Nuvem formatada e Algoritmos Calibrados para {config['nome']}.")
