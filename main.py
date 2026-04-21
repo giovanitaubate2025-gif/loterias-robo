@@ -38,7 +38,7 @@ HEADERS = {
 sessao = requests.Session()
 
 # =========================================================================
-# 2. FUNÇÕES DE APOIO E LIMPEZA
+# 2. FUNÇÕES DE APOIO E COMUNICAÇÃO FIREBASE
 # =========================================================================
 def db_call(method, path, data=None):
     """Gerencia chamadas ao Firebase."""
@@ -65,18 +65,12 @@ def extrair_id_limpo(valor):
 # 3. MOTOR 6: MACHINE LEARNING (O ALGORITMO PAI QUE APRENDE)
 # =========================================================================
 def auditar_e_aprender(config, dezenas_reais):
-    """
-    O Algoritmo Pai: Lê os jogos gerados no concurso anterior e compara com o sorteio de hoje.
-    Ajusta os "Pesos Cognitivos" para a próxima geração ser mais inteligente.
-    """
     nome = config["nome"]
     print(f"   🧠 ML-Auditor: Avaliando taxa de acerto do robô para {nome}...")
     
-    # Busca palpites antigos antes deles serem deletados
     jogos_antigos = db_call("GET", f"ESTATISTICAS/{nome}/jogos_prontos")
     pesos_atuais = db_call("GET", f"EVOLUCAO_DA_IA/{nome}/pesos")
     
-    # Pesos padrão se for a primeira vez rodando
     if not pesos_atuais:
         pesos_atuais = {"peso_quentes": 0.4, "peso_atrasadas": 0.3, "peso_cooc": 0.3}
 
@@ -89,28 +83,23 @@ def auditar_e_aprender(config, dezenas_reais):
     qtd_jogos = len(jogos_antigos)
 
     for chave, jogo in jogos_antigos.items():
-        # Trata jogos com trevos (Mais Milionária)
         dzs_jogo = jogo["numeros"] if isinstance(jogo, dict) else jogo
         dzs_int = set(int(x) for x in dzs_jogo)
         acertos = len(dzs_int.intersection(dezenas_reais_set))
         total_acertos += acertos
 
     media_acertos = total_acertos / qtd_jogos if qtd_jogos > 0 else 0
-    alvo_esperado = config["qtd"] * 0.3 # O robô quer acertar pelo menos 30% da cartela na média geral
+    alvo_esperado = config["qtd"] * 0.3 
     
-    # Calibragem Dinâmica (Deep Learning Adjustments)
     if media_acertos < alvo_esperado:
-        # Se errou muito, muda a estratégia: dá mais peso para as Atrasadas e Coocorrência
         pesos_atuais["peso_quentes"] = max(0.1, pesos_atuais["peso_quentes"] - 0.05)
         pesos_atuais["peso_atrasadas"] = min(0.6, pesos_atuais["peso_atrasadas"] + 0.05)
     else:
-        # Se acertou bem, consolida a estratégia de Quentes
         pesos_atuais["peso_quentes"] = min(0.7, pesos_atuais["peso_quentes"] + 0.05)
         pesos_atuais["peso_atrasadas"] = max(0.1, pesos_atuais["peso_atrasadas"] - 0.05)
 
     print(f"   📈 Evolução: Média de Acertos: {media_acertos:.2f} | Novos Pesos: {pesos_atuais}")
     
-    # Salva os novos pesos de inteligência no banco oculto
     db_call("PATCH", f"EVOLUCAO_DA_IA/{nome}/pesos", pesos_atuais)
     return pesos_atuais
 
@@ -121,34 +110,44 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     nome = config["nome"]
     print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas (Análise Global)...")
     
-    # MOTOR 1: VARREDURA HISTÓRICA TOTAL E GLOBAL
-    # Lê ABSOLUTAMENTE TODOS os concursos já registrados (do nº 1 ao atual) sem atalhos
+    # MOTOR 1: VARREDURA HISTÓRICA TOTAL E GLOBAL (Lê tudo)
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}")
     if not hist: return {}
     dados_h = hist if isinstance(hist, dict) else {str(i): v for i, v in enumerate(hist) if v}
     
     todas_dz = []
-    matriz_afinidade = Counter() # MOTOR 2: Matriz de Coocorrência
-    atrasos = {} # MOTOR 3: Ciclos e Atrasos
+    matriz_afinidade = Counter()
+    atrasos = {} 
     somas_historicas = []
     
-    # Analisa cronologicamente para pegar atrasos exatos
     concursos_ordenados = sorted(dados_h.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0)
     
-    for _, concurso in concursos_ordenados:
-        dzs = sorted(list(set(concurso.get("dezenas", []))))
-        if not dzs: continue
+    for c_id, concurso in concursos_ordenados:
+        if not concurso: continue
         
-        dzs_int = [int(x) for x in dzs]
+        dzs_int = []
+        # AUTO-CURA EM MEMÓRIA: Se for o formato velho/sujo do Excel, converte em tempo real
+        if isinstance(concurso, dict) and "Bola1" in concurso:
+            for i in range(1, 100):
+                b_chave = f"Bola{i}"
+                if b_chave in concurso:
+                    try: dzs_int.append(int(concurso[b_chave]))
+                    except: pass
+        else:
+            # Formato limpo atual
+            dzs = concurso.get("dezenas", [])
+            dzs_int = [int(x) for x in dzs] if dzs else []
+            
+        if not dzs_int: continue
+        
+        dzs_int = sorted(list(set(dzs_int)))
         todas_dz.extend(dzs_int)
         somas_historicas.append(sum(dzs_int))
         
-        # Atualiza o termômetro de atrasos
         for num in range(1 if slug not in ["lotomania", "supersete"] else 0, config.get("total", 60) + 1):
             if num in dzs_int: atrasos[num] = 0
             else: atrasos[num] = atrasos.get(num, 0) + 1
             
-        # Mapeia as amizades entre bolas (Quem sai com quem)
         for i in range(len(dzs_int)):
             for j in range(i + 1, len(dzs_int)):
                 matriz_afinidade[tuple(sorted((dzs_int[i], dzs_int[j])))] += 1
@@ -157,11 +156,9 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     quentes = [x[0] for x in freq.most_common()]
     atrasadas = sorted(atrasos.keys(), key=lambda k: atrasos[k], reverse=True)
     
-    # MOTOR 4: JUIZ DE BALANCEAMENTO (Média da Curva de Gauss)
     media_soma = sum(somas_historicas) / len(somas_historicas) if somas_historicas else 0
-    margem_soma = media_soma * 0.25 # Tolerância de 25% para mais ou para menos
+    margem_soma = media_soma * 0.25 
 
-    # MOTOR 5: O MONTADOR ESTRUTURADO (Gera os 50 Jogos)
     palpites = {}
     inicio = 0 if slug in ["lotomania", "supersete"] else 1
     fim = 99 if slug == "lotomania" else (9 if slug == "supersete" else config.get("total", 60))
@@ -171,7 +168,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     tentativas = 0
     qtd = config["qtd"]
     
-    # Aplica os pesos do Algoritmo Pai (Machine Learning)
     p_quentes = pesos_cognitivos.get("peso_quentes", 0.4)
     p_atrasadas = pesos_cognitivos.get("peso_atrasadas", 0.3)
     
@@ -180,39 +176,30 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         tentativas += 1
         pool = set()
         
-        # 1. Pega bolas Quentes com base no peso da IA
         qtd_quentes = int(qtd * p_quentes)
         pool.update(random.sample(quentes[:30], min(30, qtd_quentes)))
         
-        # 2. Pega bolas Atrasadas com base no peso da IA
         qtd_atrasadas = int(qtd * p_atrasadas)
         pool.update(random.sample(atrasadas[:20], min(20, qtd_atrasadas)))
         
-        # 3. Força a Coocorrência (Bolas Amigas)
         if pool:
             bola_base = list(pool)[0]
-            # Acha o melhor amigo da bola base no histórico
             amigos = [par for par in matriz_afinidade.keys() if bola_base in par]
             if amigos:
                 amigos.sort(key=lambda x: matriz_afinidade[x], reverse=True)
                 melhor_amigo = amigos[0][1] if amigos[0][0] == bola_base else amigos[0][0]
                 pool.add(melhor_amigo)
         
-        # 4. Preenche o resto com números para equilibrar a cartela
         while len(pool) < qtd:
             pool.add(random.randint(inicio, fim))
             
-        # O JUIZ ENTRA EM AÇÃO (Validações Estritas)
         jg = sorted(list(pool)[:qtd])
         soma_jogo = sum(jg)
         
-        # Só aprova se a soma for matematicamente coerente com o histórico
         passou_juiz_soma = (media_soma - margem_soma) <= soma_jogo <= (media_soma + margem_soma)
-        
         assinatura = "-".join(str(x) for x in jg)
         
         if assinatura not in jogos_unicos and (passou_juiz_soma or tentativas > 3000):
-            # Se tentou muito (3000x) e a matemática for muito dura, ele aprova pela exclusividade
             jogos_unicos.add(assinatura)
             
             if "trevos" in config:
@@ -226,16 +213,56 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     return palpites
 
 # =========================================================================
-# 5. AUDITORIA E CAPTURA TRIPLA
+# 5. O TRATOR DE VISTORIA (INSPETOR IMPLACÁVEL DE ERROS DA NUVEM)
 # =========================================================================
-def banco_esta_incompleto(nome_jogo, conc_api):
+def banco_esta_incompleto(nome_jogo, slug, conc_api):
+    """
+    Fiscaliza a nuvem com rigor militar. Se faltar a data, se faltar
+    o Time do Coração, ou se tiver Lixo (Bola1), ele força a exclusão
+    e baixa tudo novo direto da Caixa.
+    """
     hoje = db_call("GET", f"SORTEIO_DE_HOJE/{nome_jogo}")
+    hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome_jogo}/{conc_api}")
+    
+    # 1. Se a gaveta de hoje ou o histórico não tem esse concurso, está incompleto
     if not hoje or str(hoje.get("numero")) != str(conc_api): return True
-    if not hoje.get("data") or hoje.get("data") == "" or not hoje.get("premiacoes"):
-        print(f"   🔍 Inspetor: Falha de integridade em {nome_jogo}. Corrigindo banco...")
-        return True
+    if not hist: return True
+
+    # 2. Vistoria Profunda nos dois arquivos (Hoje e Histórico)
+    for base in [hoje, hist]:
+        # Falta a Data?
+        if not base.get("data") or base.get("data") == "":
+            print(f"   🔍 Inspetor: 'Data' em branco em {nome_jogo}. Corrigindo banco...")
+            return True
+            
+        # Faltam as Premiações da Caixa?
+        if not base.get("premiacoes") or len(base.get("premiacoes")) == 0:
+            print(f"   🔍 Inspetor: Tabela de 'Premiações' vazia em {nome_jogo}.")
+            return True
+            
+        # Tem Lixo Antigo do Excel? (Bola1, Bola2...)
+        if "Bola1" in base or "Cidade UF" in base:
+            print(f"   🔍 Inspetor: Lixo antigo do Excel detectado em {nome_jogo}.")
+            return True
+            
+        # Regras Específicas por Jogo!
+        if slug == "timemania" and not base.get("timeCoracao"):
+            print(f"   🔍 Inspetor: Falta o 'Time do Coração' na Timemania!")
+            return True
+            
+        if slug == "diadesorte" and not base.get("mesSorte"):
+            print(f"   🔍 Inspetor: Falta o 'Mês da Sorte' no Dia de Sorte!")
+            return True
+            
+        if slug == "maismilionaria" and not base.get("trevos"):
+            print(f"   🔍 Inspetor: Falta os 'Trevos' na +Milionária!")
+            return True
+            
     return False
 
+# =========================================================================
+# 6. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA (TIMES E TREVOS)
+# =========================================================================
 def buscar_dados_loteria(slug):
     fontes = [
         (f"https://servicebus2.caixa.gov.br/loterias/api/{slug}", "CAIXA"),
@@ -254,58 +281,81 @@ def buscar_dados_loteria(slug):
                 p_data = d.get("dataPróximoConcurso") or d.get("dataProximoConcurso") or d.get("data_proximo_concurso", "")
                 p_est = d.get("valorEstimadoPróximoConcurso") or d.get("valorEstimadoProximoConcurso") or d.get("valor_estimado_proximo_concurso", 0)
                 
+                # --- CAPTURA DE VARIÁVEIS ESPECÍFICAS (A RAIZ DO SEU PROBLEMA FOI RESOLVIDA AQUI) ---
+                extra_str = ""
+                trevos_lista = []
+                
+                if slug == "timemania":
+                    extra_str = d.get("nomeTimeCoracaoMessorte") or d.get("time_do_coracao") or d.get("timeCoracao") or ""
+                elif slug == "diadesorte":
+                    extra_str = d.get("nomeTimeCoracaoMessorte") or d.get("mes_da_sorte") or d.get("mesSorte") or ""
+                elif slug == "maismilionaria":
+                    tr = d.get("trevos") or d.get("listaTrevos") or []
+                    trevos_lista = [int(x) for x in tr] if tr else []
+
                 return {
                     "conc": str(c), "data": dt, "dzs": [int(x) for x in dzs] if dzs else [],
                     "acum": d.get("acumulado") or d.get("acumulou"),
                     "arrec": d.get("valorArrecadado") or d.get("valor_arrecadado", 0),
                     "rates": d.get("listaRateioPremio") or d.get("premiacoes", []),
-                    "p_data": p_data, "p_est": p_est
+                    "p_data": p_data, "p_est": p_est,
+                    "extra": extra_str, "trevos": trevos_lista
                 }
         except: continue
     return None
 
 # =========================================================================
-# 6. EFEITO DOMINÓ (ROTEAMENTO E DISTRIBUIÇÃO)
+# 7. EFEITO DOMINÓ (ROTEAMENTO E DISTRIBUIÇÃO BLINDADOS)
 # =========================================================================
 def efeito_domino(slug, config, d):
     nome = config["nome"]
     c_id = extrair_id_limpo(d["conc"])
-    print(f"   🚀 Distribuindo Pacotes de Dados: {nome} (Conc. {c_id})")
+    print(f"   🚀 Distribuindo Pacotes e Limpando Lixo Antigo: {nome} (Conc. {c_id})")
 
-    # === ALGORITMO PAI === 
-    # Antes de apagar, ele analisa se a IA acertou o sorteio atual e calibra os pesos
     pesos_calibrados = auditar_e_aprender(config, d["dzs"])
 
-    # 📦 PACOTE 1: PRESENTE E PASSADO
+    # 📦 PACOTE 1: PRESENTE E PASSADO (A Ficha Perfeita)
     ficha_base = {
         "numero": c_id, "data": d["data"], "dezenas": d["dzs"],
         "acumulou": "SIM" if d["acum"] else "NÃO",
         "arrecadacao": d["arrec"], "premiacoes": d["rates"]
     }
-    db_call("PUT", f"SORTEIO_DE_HOJE/{nome}", ficha_base)
-    db_call("PATCH", f"HISTORICOS_DE_SORTEIOS/{nome}", {c_id: ficha_base})
+    
+    # Insere as chaves exclusivas se existirem
+    if slug == "timemania":
+        ficha_base["timeCoracao"] = d.get("extra", "")
+    elif slug == "diadesorte":
+        ficha_base["mesSorte"] = d.get("extra", "")
+    elif slug == "maismilionaria":
+        ficha_base["trevos"] = d.get("trevos", [])
 
-    # 📦 PACOTE 2: FUTURO (Padrão exato do Print)
+    # SUBSTITUI TUDO EM SORTEIO_DE_HOJE
+    db_call("PUT", f"SORTEIO_DE_HOJE/{nome}", ficha_base)
+    
+    # O SEGREDO DA LIMPEZA: Usamos PUT aqui. Isso OBLITERA todo o lixo do Excel ("Bola1", etc) 
+    # e subscreve com a ficha 100% perfeita que o robô acabou de criar!
+    db_call("PUT", f"HISTORICOS_DE_SORTEIOS/{nome}/{c_id}", ficha_base)
+
+    # 📦 PACOTE 2: FUTURO
     texto_estimativa = f"Estimativa de prêmio do próximo concurso {d['p_data']}" if d.get('p_data') else "Estimativa de prêmio do próximo concurso a definir"
     ficha_prox = {"texto_data": texto_estimativa, "valor_estimativa": formatar_moeda(d["p_est"])}
     db_call("PUT", f"PROXIMO_CONCURSO/{nome}", ficha_prox)
 
     # 📦 PACOTE 3: GERAÇÃO DA IA
     db_call("DELETE", f"ESTATISTICAS/{nome}")
-    time.sleep(2) # Pausa Firebase
+    time.sleep(2) 
     
-    # Passa os pesos calibrados para o motor construir jogos mais inteligentes
     palpites_novos = motor_ia_profunda(slug, config, pesos_calibrados)
     db_call("PUT", f"ESTATISTICAS/{nome}/jogos_prontos", palpites_novos)
 
 # =========================================================================
-# 7. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
+# 8. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
 # =========================================================================
 def main():
     agora_br = datetime.now(timezone.utc) - timedelta(hours=3)
     hora = agora_br.hour
     print(f"=============================================================")
-    print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA - {agora_br.strftime('%d/%m/%Y %H:%M')}")
+    print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA (INSPETOR) - {agora_br.strftime('%d/%m/%Y %H:%M')}")
     print(f"=============================================================")
 
     if hora == 9:
@@ -316,11 +366,12 @@ def main():
         dados = buscar_dados_loteria(slug)
         
         if dados:
-            if banco_esta_incompleto(config["nome"], dados["conc"]):
+            # O Trator passa aqui: ele olha a nuvem, se tiver lixo ou dados faltando, aciona o efeito dominó
+            if banco_esta_incompleto(config["nome"], slug, dados["conc"]):
                 efeito_domino(slug, config, dados)
-                print(f"   ✅ Sucesso: Nuvem Atualizada e Algoritmos Calibrados para {config['nome']}.")
+                print(f"   ✅ Sucesso: Lixo excluído! Nuvem formatada e Algoritmos Calibrados para {config['nome']}.")
             else:
-                print(f"   ✔️ {config['nome']} íntegro. Nada novo a fazer.")
+                print(f"   ✔️ {config['nome']} 100% íntegro. Nada de errado encontrado.")
         else:
             print(f"   🚨 Erro Crítico: Conexão recusada nas 3 APIs.")
 
