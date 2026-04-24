@@ -4,6 +4,7 @@ import os
 import random
 import time
 import re
+import traceback
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 
@@ -16,6 +17,7 @@ requests.packages.urllib3.disable_warnings()
 SECRET_FIREBASE = os.environ.get('FIREBASE_KEY', '7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd')
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 
+# Adicionado 'min_premio' para o Robô saber a partir de quantos acertos ele pontua no Backtesting
 JOGOS = {
     "megasena": {"nome": "MEGA-SENA", "qtd": 6, "total": 60, "min_premio": 4},
     "lotofacil": {"nome": "LOTOFACIL", "qtd": 15, "total": 25, "min_premio": 11},
@@ -73,7 +75,7 @@ def preparar_infraestrutura_frontend():
     
     # 1. Configurações Visuais e de Botões
     config_atual = db_call("GET", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL")
-    if not config_atual:
+    if not isinstance(config_atual, dict): # Blindagem extra
         config_padrao = {
             "tema_metalico": "padrao", # opções: ouro, prata, azul_royal, preto_carbono, padrao
             "usar_cores_manuais": False,
@@ -92,7 +94,7 @@ def preparar_infraestrutura_frontend():
 
     # 2. Pasta de Cadastro de Clientes Exclusiva
     cadastros = db_call("GET", "CADASTRO_DE_CLIENTES")
-    if cadastros is None:
+    if not isinstance(cadastros, dict): # Blindagem extra
         # Inicializa a pasta vazia para evitar erros no aplicativo
         db_call("PUT", "CADASTRO_DE_CLIENTES/info_sistema", {"criado_por": "Robô IA Trator", "status": "Pronto para receber cadastros"})
         print("   ✅ Pasta de Cadastro de Clientes blindada e pronta!")
@@ -107,7 +109,7 @@ def auditar_e_aprender(config, dezenas_reais):
     jogos_antigos = db_call("GET", f"ESTATISTICAS/{nome}/jogos_prontos")
     pesos_atuais = db_call("GET", f"EVOLUCAO_DA_IA/{nome}/pesos")
     
-    if not pesos_atuais:
+    if not isinstance(pesos_atuais, dict):
         pesos_atuais = {"peso_quentes": 0.4, "peso_atrasadas": 0.3, "peso_cooc": 0.3}
 
     if not jogos_antigos or not dezenas_reais:
@@ -140,14 +142,16 @@ def auditar_e_aprender(config, dezenas_reais):
     return pesos_atuais
 
 # =========================================================================
-# 5. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA GLOBAL, BACKTESTING E RANKING)
+# 5. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA E MONTAGEM DE ELITE)
 # =========================================================================
 def motor_ia_profunda(slug, config, pesos_cognitivos):
     nome = config["nome"]
-    print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas e Backtesting...")
+    print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas e Backtesting Global...")
     
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}")
-    if not hist: return {}
+    if not hist or (not isinstance(hist, dict) and not isinstance(hist, list)): 
+        return {}
+    
     dados_h = hist if isinstance(hist, dict) else {str(i): v for i, v in enumerate(hist) if v}
     
     todas_dz = []
@@ -162,12 +166,12 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     inicio = 0 if slug in ["lotomania", "supersete"] else 1
     fim = 99 if slug == "lotomania" else (9 if slug == "supersete" else config.get("total", 60))
     
-    # 5.1 MAPEAMENTO GLOBAL: Varrendo todos os concursos desde o início
+    # --- MAPEAMENTO GLOBAL (DE CIMA A BAIXO NA HISTÓRIA) ---
     for c_id, concurso in concursos_ordenados:
-        if not concurso: continue
+        if not isinstance(concurso, dict): continue
         
         dzs_int = []
-        if isinstance(concurso, dict) and "Bola1" in concurso:
+        if "Bola1" in concurso:
             for i in range(1, 100):
                 b_chave = f"Bola{i}"
                 if b_chave in concurso:
@@ -184,16 +188,13 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         todas_dz.extend(dzs_int)
         somas_historicas.append(sum(dzs_int))
         
-        # Mapeamento Global: Proporção de Ímpares/Pares
         impares = len([n for n in dzs_int if n % 2 != 0])
         pares_impares[f"{impares}i"] += 1
         
-        # Mapeamento Global: Atrasos
         for num in range(inicio, fim + 1):
             if num in dzs_int: atrasos[num] = 0
             else: atrasos[num] = atrasos.get(num, 0) + 1
             
-        # Mapeamento Global: Afinidade (Bolas Irmãs)
         for i in range(len(dzs_int)):
             for j in range(i + 1, len(dzs_int)):
                 matriz_afinidade[tuple(sorted((dzs_int[i], dzs_int[j])))] += 1
@@ -205,7 +206,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     media_soma = sum(somas_historicas) / len(somas_historicas) if somas_historicas else 0
     margem_soma = media_soma * 0.25 
     
-    # Define o alvo real de ímpares baseado na história global (Inteligência Dinâmica)
     padrao_frequente = pares_impares.most_common(1)
     imp_target = int(padrao_frequente[0][0].replace('i','')) if padrao_frequente else (config["qtd"] // 2)
 
@@ -217,8 +217,8 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     p_quentes = pesos_cognitivos.get("peso_quentes", 0.4)
     p_atrasadas = pesos_cognitivos.get("peso_atrasadas", 0.3)
     
-    print(f"   🔨 Montador: Gerando candidatos com Filtros Globais (Ímpares: {imp_target})...")
-    # Gera 150 candidatos para testar e funilar
+    print(f"   🔨 Montador: Aplicando Filtro Global de Soma, Pares/Ímpares e Exclusividade...")
+    # Gera 150 candidatos para podermos testar todos no Backtesting
     while len(candidatos) < 150 and tentativas < 5000:
         tentativas += 1
         pool = set()
@@ -229,7 +229,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         qtd_atrasadas = int(qtd * p_atrasadas)
         pool.update(random.sample(atrasadas[:20], min(20, qtd_atrasadas)))
         
-        # Injeta as bolas irmãs
         if pool:
             bola_base = list(pool)[0]
             amigos = [par for par in matriz_afinidade.keys() if bola_base in par]
@@ -249,14 +248,14 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         passou_impares = abs(qtd_impares - imp_target) <= 1
         assinatura = "-".join(str(x) for x in jg)
         
-        if assinatura not in jogos_unicos and ( (passou_juiz_soma and passou_impares) or tentativas > 3000 ):
+        if assinatura not in jogos_unicos and ((passou_juiz_soma and passou_impares) or tentativas > 3000):
             jogos_unicos.add(assinatura)
             candidatos.append(jg)
             
-    # 5.2 BACKTESTING: Confere os candidatos contra toda a história
-    print(f"   ⚖️ Backtesting Global: Testando {len(candidatos)} jogos contra a história...")
+    # --- BACKTESTING E RANKING (CONFERINDO CONTRA A HISTÓRIA) ---
+    print(f"   ⚖️ Backtesting Global: Testando {len(candidatos)} jogos contra a história inteira...")
     ranking = []
-    min_premio = config.get("min_premio", 11) # fallback seguro
+    min_premio = config.get("min_premio", 11)
     
     for jg in candidatos:
         jogo_set = set(jg)
@@ -264,20 +263,19 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         for hist_set in historico_sets:
             acertos = len(jogo_set.intersection(hist_set))
             if acertos >= min_premio:
-                # Sistema de Peso Elevado: prêmios maiores valem muito mais pontos
+                # Pontua agressivamente jogos que tiveram premiações grandes no passado
                 score += (acertos - min_premio + 1) ** 4
         ranking.append({ "numeros": jg, "score": score })
         
-    # 5.3 O FUNIL: Ordena de cima para baixo pelo Jogo que mais premiou
+    # Coloca os jogos que mais premiaram na história no Topo
     ranking.sort(key=lambda x: x["score"], reverse=True)
     
     palpites = {}
-    # 5.4 FORMATADOR: Empacota os 50 melhores e carimba os Top 3
     for i in range(min(50, len(ranking))):
         idx = i + 1
         jg_obj = ranking[i]
         
-        # Classifica os 3 primeiros como Elite Quente
+        # Carimba os 3 Primeiros como TOP 3
         status_txt = "🔥 JOGO QUENTE (TOP 3)" if idx <= 3 else "IA CLOUD BLINDADA"
         
         p_obj = {
@@ -286,13 +284,12 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
             "status": status_txt
         }
         
-        # Mantém compatibilidade integral com Loterias com trevos (+Milionária)
         if "trevos" in config:
             t = sorted(random.sample(range(1, 7), 2))
             p_obj["trevos"] = [f"{x:02d}" for x in t]
             
         palpites[f"jogo_{idx:02d}"] = p_obj
-        
+            
     return palpites
 
 # =========================================================================
@@ -302,8 +299,11 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
     hoje = db_call("GET", f"SORTEIO_DE_HOJE/{nome_jogo}")
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome_jogo}/{conc_api}")
     
-    if not hoje or str(hoje.get("numero")) != str(conc_api): return True
-    if not hist: return True
+    # PROTEÇÃO BLINDADA: Evita crash caso o usuário apague ou digite algo errado manualmente no Firebase
+    if not isinstance(hoje, dict) or str(hoje.get("numero")) != str(conc_api): 
+        return True
+    if not isinstance(hist, dict): 
+        return True
 
     for base in [hoje, hist]:
         if not base.get("data") or base.get("data") == "":
@@ -410,44 +410,48 @@ def efeito_domino(slug, config, d):
     
     palpites_novos = motor_ia_profunda(slug, config, pesos_calibrados)
     
-    # Atualiza a pasta ANTIGA para não quebrar compatibilidade
+    # Salva na pasta original (Para não quebrar nada do que você já tem)
     db_call("PUT", f"ESTATISTICAS/{nome}/jogos_prontos", palpites_novos)
     
-    # Atualiza a pasta NOVA de Alta Performance (Ex: Lotofacil_Estatisticas)
-    pasta_nova = f"{nome.replace('-', '').capitalize()}_Estatisticas/jogos_prontos"
-    db_call("PUT", pasta_nova, palpites_novos)
-    print(f"   ✅ Funil de Elite Concluído. 50 jogos enviados para a Nuvem!")
+    # Salva também na pasta isolada de Estatísticas de Alta Performance
+    pasta_isolada = f"{nome.replace('-', '').capitalize()}_Estatisticas/jogos_prontos"
+    db_call("PUT", pasta_isolada, palpites_novos)
 
 # =========================================================================
 # 9. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
 # =========================================================================
 def main():
-    agora_br = datetime.now(timezone.utc) - timedelta(hours=3)
-    hora = agora_br.hour
-    print(f"=============================================================")
-    print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA (INSPETOR) - {agora_br.strftime('%d/%m/%Y %H:%M')}")
-    print(f"=============================================================")
+    try:
+        agora_br = datetime.now(timezone.utc) - timedelta(hours=3)
+        hora = agora_br.hour
+        print(f"=============================================================")
+        print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA (INSPETOR) - {agora_br.strftime('%d/%m/%Y %H:%M')}")
+        print(f"=============================================================")
 
-    # EXECUTANDO A PREPARAÇÃO DO NOVO APLICATIVO ANTES DE QUALQUER COISA
-    preparar_infraestrutura_frontend()
+        # EXECUTANDO A PREPARAÇÃO DO NOVO APLICATIVO ANTES DE QUALQUER COISA
+        preparar_infraestrutura_frontend()
 
-    if hora == 9:
-        print("🌅 Repescagem das 09h. Parada Segura Ativa (Evitando Loop de Falha da Caixa).")
+        if hora == 9:
+            print("🌅 Repescagem das 09h. Parada Segura Ativa (Evitando Loop de Falha da Caixa).")
 
-    for slug, config in JOGOS.items():
-        print(f"\n[Processando] {config['nome']}")
-        dados = buscar_dados_loteria(slug)
-        
-        if dados:
-            if banco_esta_incompleto(config["nome"], slug, dados["conc"]):
-                efeito_domino(slug, config, dados)
-                print(f"   ✅ Sucesso: Lixo excluído! Nuvem formatada e Algoritmos Calibrados para {config['nome']}.")
+        for slug, config in JOGOS.items():
+            print(f"\n[Processando] {config['nome']}")
+            dados = buscar_dados_loteria(slug)
+            
+            if dados:
+                if banco_esta_incompleto(config["nome"], slug, dados["conc"]):
+                    efeito_domino(slug, config, dados)
+                    print(f"   ✅ Sucesso: Lixo excluído! Nuvem formatada e Algoritmos Calibrados para {config['nome']}.")
+                else:
+                    print(f"   ✔️ {config['nome']} 100% íntegro. Nada de errado encontrado.")
             else:
-                print(f"   ✔️ {config['nome']} 100% íntegro. Nada de errado encontrado.")
-        else:
-            print(f"   🚨 Erro Crítico: Conexão recusada nas 3 APIs.")
+                print(f"   🚨 Erro Crítico: Conexão recusada nas 3 APIs.")
 
-    print(f"\n🏁 SESSÃO DE IA FINALIZADA COM SUCESSO.")
+        print(f"\n🏁 SESSÃO DE IA FINALIZADA COM SUCESSO.")
+        
+    except Exception as e:
+        print(f"\n🚨 ERRO FATAL NO ROBÔ CAPTURADO E EVITADO: {e}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
