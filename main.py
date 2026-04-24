@@ -1,6 +1,3 @@
- 
-
-
 import requests
 import json
 import os
@@ -20,15 +17,15 @@ SECRET_FIREBASE = os.environ.get('FIREBASE_KEY', '7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCM
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 
 JOGOS = {
-    "megasena": {"nome": "MEGA-SENA", "qtd": 6, "total": 60},
-    "lotofacil": {"nome": "LOTOFACIL", "qtd": 15, "total": 25},
-    "quina": {"nome": "QUINA", "qtd": 5, "total": 80},
-    "lotomania": {"nome": "LOTOMANIA", "qtd": 50, "total": 100},
-    "timemania": {"nome": "TIMEMANIA", "qtd": 10, "total": 80},
-    "diadesorte": {"nome": "DIA-DE-SORTE", "qtd": 7, "total": 31},
-    "maismilionaria": {"nome": "MAIS-MILIONARIA", "qtd": 6, "total": 50, "trevos": 2},
-    "duplasena": {"nome": "DUPLA-SENA", "qtd": 6, "total": 50},
-    "supersete": {"nome": "SUPER-SETE", "qtd": 7, "total": 9, "tipo": "colunar"}
+    "megasena": {"nome": "MEGA-SENA", "qtd": 6, "total": 60, "min_premio": 4},
+    "lotofacil": {"nome": "LOTOFACIL", "qtd": 15, "total": 25, "min_premio": 11},
+    "quina": {"nome": "QUINA", "qtd": 5, "total": 80, "min_premio": 2},
+    "lotomania": {"nome": "LOTOMANIA", "qtd": 50, "total": 100, "min_premio": 15},
+    "timemania": {"nome": "TIMEMANIA", "qtd": 10, "total": 80, "min_premio": 3},
+    "diadesorte": {"nome": "DIA-DE-SORTE", "qtd": 7, "total": 31, "min_premio": 4},
+    "maismilionaria": {"nome": "MAIS-MILIONARIA", "qtd": 6, "total": 50, "trevos": 2, "min_premio": 2},
+    "duplasena": {"nome": "DUPLA-SENA", "qtd": 6, "total": 50, "min_premio": 3},
+    "supersete": {"nome": "SUPER-SETE", "qtd": 7, "total": 9, "tipo": "colunar", "min_premio": 3}
 }
 
 HEADERS = {
@@ -143,11 +140,11 @@ def auditar_e_aprender(config, dezenas_reais):
     return pesos_atuais
 
 # =========================================================================
-# 5. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA E MONTAGEM)
+# 5. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA GLOBAL, BACKTESTING E RANKING)
 # =========================================================================
 def motor_ia_profunda(slug, config, pesos_cognitivos):
     nome = config["nome"]
-    print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas (Análise Global)...")
+    print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas e Backtesting...")
     
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}")
     if not hist: return {}
@@ -157,9 +154,15 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     matriz_afinidade = Counter()
     atrasos = {} 
     somas_historicas = []
+    pares_impares = Counter()
+    historico_sets = []
     
     concursos_ordenados = sorted(dados_h.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0)
     
+    inicio = 0 if slug in ["lotomania", "supersete"] else 1
+    fim = 99 if slug == "lotomania" else (9 if slug == "supersete" else config.get("total", 60))
+    
+    # 5.1 MAPEAMENTO GLOBAL: Varrendo todos os concursos desde o início
     for c_id, concurso in concursos_ordenados:
         if not concurso: continue
         
@@ -177,13 +180,20 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         if not dzs_int: continue
         
         dzs_int = sorted(list(set(dzs_int)))
+        historico_sets.append(set(dzs_int))
         todas_dz.extend(dzs_int)
         somas_historicas.append(sum(dzs_int))
         
-        for num in range(1 if slug not in ["lotomania", "supersete"] else 0, config.get("total", 60) + 1):
+        # Mapeamento Global: Proporção de Ímpares/Pares
+        impares = len([n for n in dzs_int if n % 2 != 0])
+        pares_impares[f"{impares}i"] += 1
+        
+        # Mapeamento Global: Atrasos
+        for num in range(inicio, fim + 1):
             if num in dzs_int: atrasos[num] = 0
             else: atrasos[num] = atrasos.get(num, 0) + 1
             
+        # Mapeamento Global: Afinidade (Bolas Irmãs)
         for i in range(len(dzs_int)):
             for j in range(i + 1, len(dzs_int)):
                 matriz_afinidade[tuple(sorted((dzs_int[i], dzs_int[j])))] += 1
@@ -194,21 +204,22 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     
     media_soma = sum(somas_historicas) / len(somas_historicas) if somas_historicas else 0
     margem_soma = media_soma * 0.25 
-
-    palpites = {}
-    inicio = 0 if slug in ["lotomania", "supersete"] else 1
-    fim = 99 if slug == "lotomania" else (9 if slug == "supersete" else config.get("total", 60))
-    jogos_unicos = set()
     
-    contador = 1
+    # Define o alvo real de ímpares baseado na história global (Inteligência Dinâmica)
+    padrao_frequente = pares_impares.most_common(1)
+    imp_target = int(padrao_frequente[0][0].replace('i','')) if padrao_frequente else (config["qtd"] // 2)
+
+    candidatos = []
+    jogos_unicos = set()
     tentativas = 0
     qtd = config["qtd"]
     
     p_quentes = pesos_cognitivos.get("peso_quentes", 0.4)
     p_atrasadas = pesos_cognitivos.get("peso_atrasadas", 0.3)
     
-    print(f"   🔨 Montador: Aplicando Filtro de Soma e Exclusividade...")
-    while contador <= 50 and tentativas < 5000:
+    print(f"   🔨 Montador: Gerando candidatos com Filtros Globais (Ímpares: {imp_target})...")
+    # Gera 150 candidatos para testar e funilar
+    while len(candidatos) < 150 and tentativas < 5000:
         tentativas += 1
         pool = set()
         
@@ -218,6 +229,7 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         qtd_atrasadas = int(qtd * p_atrasadas)
         pool.update(random.sample(atrasadas[:20], min(20, qtd_atrasadas)))
         
+        # Injeta as bolas irmãs
         if pool:
             bola_base = list(pool)[0]
             amigos = [par for par in matriz_afinidade.keys() if bola_base in par]
@@ -231,21 +243,56 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
             
         jg = sorted(list(pool)[:qtd])
         soma_jogo = sum(jg)
+        qtd_impares = len([n for n in jg if n % 2 != 0])
         
         passou_juiz_soma = (media_soma - margem_soma) <= soma_jogo <= (media_soma + margem_soma)
+        passou_impares = abs(qtd_impares - imp_target) <= 1
         assinatura = "-".join(str(x) for x in jg)
         
-        if assinatura not in jogos_unicos and (passou_juiz_soma or tentativas > 3000):
+        if assinatura not in jogos_unicos and ( (passou_juiz_soma and passou_impares) or tentativas > 3000 ):
             jogos_unicos.add(assinatura)
+            candidatos.append(jg)
             
-            if "trevos" in config:
-                t = sorted(random.sample(range(1, 7), 2))
-                palpites[f"jogo_{contador:02d}"] = {"numeros": [f"{x:02d}" for x in jg], "trevos": [f"{x:02d}" for x in t]}
-            else:
-                palpites[f"jogo_{contador:02d}"] = [f"{x:02d}" for x in jg]
+    # 5.2 BACKTESTING: Confere os candidatos contra toda a história
+    print(f"   ⚖️ Backtesting Global: Testando {len(candidatos)} jogos contra a história...")
+    ranking = []
+    min_premio = config.get("min_premio", 11) # fallback seguro
+    
+    for jg in candidatos:
+        jogo_set = set(jg)
+        score = 0
+        for hist_set in historico_sets:
+            acertos = len(jogo_set.intersection(hist_set))
+            if acertos >= min_premio:
+                # Sistema de Peso Elevado: prêmios maiores valem muito mais pontos
+                score += (acertos - min_premio + 1) ** 4
+        ranking.append({ "numeros": jg, "score": score })
+        
+    # 5.3 O FUNIL: Ordena de cima para baixo pelo Jogo que mais premiou
+    ranking.sort(key=lambda x: x["score"], reverse=True)
+    
+    palpites = {}
+    # 5.4 FORMATADOR: Empacota os 50 melhores e carimba os Top 3
+    for i in range(min(50, len(ranking))):
+        idx = i + 1
+        jg_obj = ranking[i]
+        
+        # Classifica os 3 primeiros como Elite Quente
+        status_txt = "🔥 JOGO QUENTE (TOP 3)" if idx <= 3 else "IA CLOUD BLINDADA"
+        
+        p_obj = {
+            "numeros": [f"{x:02d}" for x in jg_obj["numeros"]],
+            "taxa_acerto": jg_obj["score"],
+            "status": status_txt
+        }
+        
+        # Mantém compatibilidade integral com Loterias com trevos (+Milionária)
+        if "trevos" in config:
+            t = sorted(random.sample(range(1, 7), 2))
+            p_obj["trevos"] = [f"{x:02d}" for x in t]
             
-            contador += 1
-            
+        palpites[f"jogo_{idx:02d}"] = p_obj
+        
     return palpites
 
 # =========================================================================
@@ -362,7 +409,14 @@ def efeito_domino(slug, config, d):
     time.sleep(2) 
     
     palpites_novos = motor_ia_profunda(slug, config, pesos_calibrados)
+    
+    # Atualiza a pasta ANTIGA para não quebrar compatibilidade
     db_call("PUT", f"ESTATISTICAS/{nome}/jogos_prontos", palpites_novos)
+    
+    # Atualiza a pasta NOVA de Alta Performance (Ex: Lotofacil_Estatisticas)
+    pasta_nova = f"{nome.replace('-', '').capitalize()}_Estatisticas/jogos_prontos"
+    db_call("PUT", pasta_nova, palpites_novos)
+    print(f"   ✅ Funil de Elite Concluído. 50 jogos enviados para a Nuvem!")
 
 # =========================================================================
 # 9. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
