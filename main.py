@@ -17,7 +17,6 @@ requests.packages.urllib3.disable_warnings()
 SECRET_FIREBASE = os.environ.get('FIREBASE_KEY', '7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd')
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 
-# Adicionado 'min_premio' para o Robô saber a partir de quantos acertos ele pontua no Backtesting
 JOGOS = {
     "megasena": {"nome": "MEGA-SENA", "qtd": 6, "total": 60, "min_premio": 4},
     "lotofacil": {"nome": "LOTOFACIL", "qtd": 15, "total": 25, "min_premio": 11},
@@ -67,23 +66,18 @@ def extrair_id_limpo(valor):
 # 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP (NOVO)
 # =========================================================================
 def preparar_infraestrutura_frontend():
-    """
-    Cria as gavetas na nuvem para as novas funções visuais e de segurança 
-    do aplicativo (Bolões, Cadastro, Cores Metálicas, Imagem de Fundo).
-    """
     print("   ⚙️ Verificando infraestrutura de Design e Segurança do App...")
     
-    # 1. Configurações Visuais e de Botões
     config_atual = db_call("GET", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL")
-    if not isinstance(config_atual, dict): # Blindagem extra
+    if not isinstance(config_atual, dict):
         config_padrao = {
-            "tema_metalico": "padrao", # opções: ouro, prata, azul_royal, preto_carbono, padrao
+            "tema_metalico": "padrao",
             "usar_cores_manuais": False,
             "cor_texto_btn": "#ffffff",
             "cor_fundo_btn1": "#31006F",
             "cor_fundo_btn2": "#f39c12",
-            "imagem_fundo_url": "", # Link da imagem que vai cobrir 100% da tela
-            "boloes_status": "oculto", # opções: oculto, visivel, bloqueado, senha, cadastro
+            "imagem_fundo_url": "", 
+            "boloes_status": "oculto",
             "boloes_link": "https://seulinkpopular.com",
             "boloes_senha": "",
             "rodape_ativo": False,
@@ -92,10 +86,8 @@ def preparar_infraestrutura_frontend():
         db_call("PUT", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL", config_padrao)
         print("   ✅ Gavetas de Configuração Visual e Bolões criadas com sucesso!")
 
-    # 2. Pasta de Cadastro de Clientes Exclusiva
     cadastros = db_call("GET", "CADASTRO_DE_CLIENTES")
-    if not isinstance(cadastros, dict): # Blindagem extra
-        # Inicializa a pasta vazia para evitar erros no aplicativo
+    if not isinstance(cadastros, dict):
         db_call("PUT", "CADASTRO_DE_CLIENTES/info_sistema", {"criado_por": "Robô IA Trator", "status": "Pronto para receber cadastros"})
         print("   ✅ Pasta de Cadastro de Clientes blindada e pronta!")
 
@@ -109,8 +101,19 @@ def auditar_e_aprender(config, dezenas_reais):
     jogos_antigos = db_call("GET", f"ESTATISTICAS/{nome}/jogos_prontos")
     pesos_atuais = db_call("GET", f"EVOLUCAO_DA_IA/{nome}/pesos")
     
+    # Proteção absoluta contra chaves faltando no banco de dados
     if not isinstance(pesos_atuais, dict):
-        pesos_atuais = {"peso_quentes": 0.4, "peso_atrasadas": 0.3, "peso_cooc": 0.3}
+        pesos_atuais = {}
+        
+    p_quentes = pesos_atuais.get("peso_quentes", 0.4)
+    p_atrasadas = pesos_atuais.get("peso_atrasadas", 0.3)
+    p_cooc = pesos_atuais.get("peso_cooc", 0.3)
+    
+    pesos_atuais = {
+        "peso_quentes": p_quentes,
+        "peso_atrasadas": p_atrasadas,
+        "peso_cooc": p_cooc
+    }
 
     if not jogos_antigos or not dezenas_reais:
         db_call("PATCH", f"EVOLUCAO_DA_IA/{nome}/pesos", pesos_atuais)
@@ -218,16 +221,15 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     p_atrasadas = pesos_cognitivos.get("peso_atrasadas", 0.3)
     
     print(f"   🔨 Montador: Aplicando Filtro Global de Soma, Pares/Ímpares e Exclusividade...")
-    # Gera 150 candidatos para podermos testar todos no Backtesting
     while len(candidatos) < 150 and tentativas < 5000:
         tentativas += 1
         pool = set()
         
-        qtd_quentes = int(qtd * p_quentes)
-        pool.update(random.sample(quentes[:30], min(30, qtd_quentes)))
+        qtd_quentes_int = int(qtd * p_quentes)
+        pool.update(random.sample(quentes[:30], min(30, qtd_quentes_int)))
         
-        qtd_atrasadas = int(qtd * p_atrasadas)
-        pool.update(random.sample(atrasadas[:20], min(20, qtd_atrasadas)))
+        qtd_atrasadas_int = int(qtd * p_atrasadas)
+        pool.update(random.sample(atrasadas[:20], min(20, qtd_atrasadas_int)))
         
         if pool:
             bola_base = list(pool)[0]
@@ -263,11 +265,9 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         for hist_set in historico_sets:
             acertos = len(jogo_set.intersection(hist_set))
             if acertos >= min_premio:
-                # Pontua agressivamente jogos que tiveram premiações grandes no passado
                 score += (acertos - min_premio + 1) ** 4
         ranking.append({ "numeros": jg, "score": score })
         
-    # Coloca os jogos que mais premiaram na história no Topo
     ranking.sort(key=lambda x: x["score"], reverse=True)
     
     palpites = {}
@@ -275,7 +275,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         idx = i + 1
         jg_obj = ranking[i]
         
-        # Carimba os 3 Primeiros como TOP 3
         status_txt = "🔥 JOGO QUENTE (TOP 3)" if idx <= 3 else "IA CLOUD BLINDADA"
         
         p_obj = {
@@ -299,7 +298,6 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
     hoje = db_call("GET", f"SORTEIO_DE_HOJE/{nome_jogo}")
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome_jogo}/{conc_api}")
     
-    # PROTEÇÃO BLINDADA: Evita crash caso o usuário apague ou digite algo errado manualmente no Firebase
     if not isinstance(hoje, dict) or str(hoje.get("numero")) != str(conc_api): 
         return True
     if not isinstance(hist, dict): 
@@ -410,12 +408,13 @@ def efeito_domino(slug, config, d):
     
     palpites_novos = motor_ia_profunda(slug, config, pesos_calibrados)
     
-    # Salva na pasta original (Para não quebrar nada do que você já tem)
+    # Salva na pasta original 
     db_call("PUT", f"ESTATISTICAS/{nome}/jogos_prontos", palpites_novos)
     
     # Salva também na pasta isolada de Estatísticas de Alta Performance
     pasta_isolada = f"{nome.replace('-', '').capitalize()}_Estatisticas/jogos_prontos"
     db_call("PUT", pasta_isolada, palpites_novos)
+    print(f"   ✅ Funil de Elite Concluído. 50 jogos enviados para a Nuvem!")
 
 # =========================================================================
 # 9. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
@@ -428,7 +427,6 @@ def main():
         print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA (INSPETOR) - {agora_br.strftime('%d/%m/%Y %H:%M')}")
         print(f"=============================================================")
 
-        # EXECUTANDO A PREPARAÇÃO DO NOVO APLICATIVO ANTES DE QUALQUER COISA
         preparar_infraestrutura_frontend()
 
         if hora == 9:
