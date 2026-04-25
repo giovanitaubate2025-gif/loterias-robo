@@ -332,20 +332,31 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
 
 # =========================================================================
 # 7. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA (TIMES E TREVOS)
+# AQUI ESTÁ A LÓGICA DO JUIZ DE COMPARAÇÃO!
 # =========================================================================
 def buscar_dados_loteria(slug):
+    quebrador_cache = int(time.time() * 1000)
+    
+    # Caixa em primeiro lugar (com quebrador de cache para evitar atrasos)
     fontes = [
-        (f"https://servicebus2.caixa.gov.br/loterias/api/{slug}", "CAIXA"),
+        (f"https://servicebus2.caixa.gov.br/loterias/api/{slug}?_={quebrador_cache}", "CAIXA"),
         (f"https://brasilapi.com.br/api/loterias/v1/{slug}", "BRASIL API"),
         (f"https://loteriascaixa-api.herokuapp.com/api/{slug}/latest", "ESPELHO HEROKU")
     ]
+    
+    resultados_obtidos = []
+    
     for url, nome_fonte in fontes:
         try:
-            print(f"   🔎 Tentando {nome_fonte}...")
-            res = sessao.get(url, headers=HEADERS, verify=False, timeout=20)
+            print(f"   🔎 Consultando {nome_fonte}...")
+            res = sessao.get(url, headers=HEADERS, verify=False, timeout=15)
             if res.status_code == 200:
                 d = res.json()
                 c = d.get("numero") or d.get("concurso")
+                
+                # Se a API retornou lixo sem número de concurso, ignora ela
+                if not c: continue
+                
                 dt = d.get("dataApuracao") or d.get("data")
                 dzs = d.get("listaDezenas") or d.get("dezenas")
                 p_data = d.get("dataPróximoConcurso") or d.get("dataProximoConcurso") or d.get("data_proximo_concurso", "")
@@ -362,15 +373,37 @@ def buscar_dados_loteria(slug):
                     tr = d.get("trevos") or d.get("listaTrevos") or []
                     trevos_lista = [int(x) for x in tr] if tr else []
 
-                return {
+                # Salva o resultado formatado no "caderno do juiz"
+                resultado_formatado = {
                     "conc": str(c), "data": dt, "dzs": [int(x) for x in dzs] if dzs else [],
                     "acum": d.get("acumulado") or d.get("acumulou"),
                     "arrec": d.get("valorArrecadado") or d.get("valor_arrecadado", 0),
                     "rates": d.get("listaRateioPremio") or d.get("premiacoes", []),
                     "p_data": p_data, "p_est": p_est,
-                    "extra": extra_str, "trevos": trevos_lista
+                    "extra": extra_str, "trevos": trevos_lista,
+                    "fonte_oficial": nome_fonte
                 }
-        except: continue
+                resultados_obtidos.append(resultado_formatado)
+        except Exception as e:
+            # Se a fonte der erro ou demorar muito, o robô ignora e vai pra próxima
+            continue
+
+    # LÓGICA DO JUIZ DE COMPARAÇÃO
+    # Avalia qual das APIs entregou o resultado mais novo e completo
+    if resultados_obtidos:
+        def rankeador(x):
+            # O critério 1 é o MAIOR número do concurso
+            num_concurso = int(extrair_id_limpo(x["conc"]) or 0)
+            # O critério 2 é o desempate: quem já tem os rateios (premiacoes) preenchidos ganha
+            tem_rateio = 1 if len(x.get("rates", [])) > 0 else 0
+            return (num_concurso, tem_rateio)
+            
+        resultados_obtidos.sort(key=rankeador, reverse=True)
+        campeao = resultados_obtidos[0]
+        
+        print(f"   🏆 Comparação concluída: A fonte mais atualizada foi {campeao['fonte_oficial']} (Conc. {campeao['conc']})")
+        return campeao
+        
     return None
 
 # =========================================================================
