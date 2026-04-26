@@ -8,6 +8,9 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 
+# --- NOVA ADIÇÃO: Biblioteca anti-bloqueio ---
+from curl_cffi import requests as curl_requests 
+
 # Desativa avisos de SSL para estabilidade em servidores nuvem
 requests.packages.urllib3.disable_warnings()
 
@@ -36,7 +39,8 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9"
 }
 
-sessao = requests.Session()
+# --- NOVA ADIÇÃO: Disfarce de Google Chrome para evitar bloqueio da Caixa ---
+sessao = curl_requests.Session(impersonate="chrome110")
 
 # =========================================================================
 # 2. FUNÇÕES DE APOIO E COMUNICAÇÃO FIREBASE
@@ -63,7 +67,7 @@ def extrair_id_limpo(valor):
     return str(int(match.group())) if match else None
 
 # =========================================================================
-# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP (NOVO)
+# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP
 # =========================================================================
 def preparar_infraestrutura_frontend():
     print("   ⚙️ Verificando infraestrutura de Design e Segurança do App...")
@@ -331,17 +335,17 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
     return False
 
 # =========================================================================
-# 7. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA (TIMES E TREVOS)
-# AQUI ESTÁ A LÓGICA DO JUIZ DE COMPARAÇÃO!
+# 7. CAPTURA DE DADOS REAIS (AGORA COM ANTI-BLOQUEIO E LOGS DE ERRO)
 # =========================================================================
 def buscar_dados_loteria(slug):
     quebrador_cache = int(time.time() * 1000)
     
-    # Caixa em primeiro lugar (com quebrador de cache para evitar atrasos)
     fontes = [
         (f"https://servicebus2.caixa.gov.br/loterias/api/{slug}?_={quebrador_cache}", "CAIXA"),
-        (f"https://brasilapi.com.br/api/loterias/v1/{slug}", "BRASIL API"),
-        (f"https://loteriascaixa-api.herokuapp.com/api/{slug}/latest", "ESPELHO HEROKU")
+        (f"https://brasilapi.com.br/api/loterias/v1/{slug}", "BRASIL API")
+        # Espelho HEROKU foi apenas comentado para não remover código seu, 
+        # mas ele não será executado pois está desativado mundialmente.
+        # (f"https://loteriascaixa-api.herokuapp.com/api/{slug}/latest", "ESPELHO HEROKU")
     ]
     
     resultados_obtidos = []
@@ -349,13 +353,23 @@ def buscar_dados_loteria(slug):
     for url, nome_fonte in fontes:
         try:
             print(f"   🔎 Consultando {nome_fonte}...")
+            # AQUI ESTÁ A MÁGICA: O robô usa a sessão blindada (curl_cffi)
             res = sessao.get(url, headers=HEADERS, verify=False, timeout=15)
+            
             if res.status_code == 200:
-                d = res.json()
+                # Tenta ler como JSON. Se a Caixa devolver HTML de bloqueio, interceptamos.
+                try:
+                    d = res.json()
+                except json.JSONDecodeError:
+                    print(f"   [!] {nome_fonte} retornou uma página de bloqueio em vez de dados (Firewall).")
+                    continue
+                
                 c = d.get("numero") or d.get("concurso")
                 
                 # Se a API retornou lixo sem número de concurso, ignora ela
-                if not c: continue
+                if not c: 
+                    print(f"   [!] {nome_fonte} não retornou o número do concurso válido.")
+                    continue
                 
                 dt = d.get("dataApuracao") or d.get("data")
                 dzs = d.get("listaDezenas") or d.get("dezenas")
@@ -384,8 +398,12 @@ def buscar_dados_loteria(slug):
                     "fonte_oficial": nome_fonte
                 }
                 resultados_obtidos.append(resultado_formatado)
+            else:
+                 print(f"   [!] {nome_fonte} negou o acesso (Erro HTTP: {res.status_code}).")
+                 
         except Exception as e:
-            # Se a fonte der erro ou demorar muito, o robô ignora e vai pra próxima
+            # AGORA OS ERROS APARECEM NO CONSOLE DO GITHUB ACTIONS!
+            print(f"   [!] Falha de conexão com {nome_fonte}: {e}")
             continue
 
     # LÓGICA DO JUIZ DE COMPARAÇÃO
@@ -476,7 +494,7 @@ def main():
                 else:
                     print(f"   ✔️ {config['nome']} 100% íntegro. Nada de errado encontrado.")
             else:
-                print(f"   🚨 Erro Crítico: Conexão recusada nas 3 APIs.")
+                print(f"   🚨 Erro Crítico: Conexão recusada nas APIs e bloqueios registrados nos logs acima.")
 
         print(f"\n🏁 SESSÃO DE IA FINALIZADA COM SUCESSO.")
         
