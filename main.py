@@ -8,7 +8,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 
-# Desativa avisos de SSL para estabilidade em servidores nuvem
+# Desativa avisos de SSL
 requests.packages.urllib3.disable_warnings()
 
 # =========================================================================
@@ -42,7 +42,6 @@ sessao = requests.Session()
 # 2. FUNÇÕES DE APOIO E COMUNICAÇÃO FIREBASE
 # =========================================================================
 def db_call(method, path, data=None):
-    """Gerencia chamadas ao Firebase."""
     url = f"{URL_FIREBASE}{path}.json?auth={SECRET_FIREBASE}"
     try:
         if method == "GET": return sessao.get(url, timeout=40).json()
@@ -63,24 +62,18 @@ def extrair_id_limpo(valor):
     return str(int(match.group())) if match else None
 
 # =========================================================================
-# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP (NOVO)
+# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP
 # =========================================================================
 def preparar_infraestrutura_frontend():
     print("   ⚙️ Verificando infraestrutura de Design e Segurança do App...")
-    
     config_atual = db_call("GET", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL")
     if not isinstance(config_atual, dict):
         config_padrao = {
-            "tema_metalico": "padrao",
-            "usar_cores_manuais": False,
-            "cor_texto_btn": "#ffffff",
-            "cor_fundo_btn1": "#31006F",
-            "cor_fundo_btn2": "#f39c12",
-            "imagem_fundo_url": "", 
-            "boloes_status": "oculto",
-            "boloes_link": "https://seulinkpopular.com",
-            "boloes_senha": "",
-            "rodape_ativo": False,
+            "tema_metalico": "padrao", "usar_cores_manuais": False,
+            "cor_texto_btn": "#ffffff", "cor_fundo_btn1": "#31006F",
+            "cor_fundo_btn2": "#f39c12", "imagem_fundo_url": "", 
+            "boloes_status": "oculto", "boloes_link": "https://seulinkpopular.com",
+            "boloes_senha": "", "rodape_ativo": False,
             "rodape_texto": "Gerador Oficial Inteligente - Boa Sorte!"
         }
         db_call("PUT", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL", config_padrao)
@@ -101,19 +94,13 @@ def auditar_e_aprender(config, dezenas_reais):
     jogos_antigos = db_call("GET", f"ESTATISTICAS/{nome}/jogos_prontos")
     pesos_atuais = db_call("GET", f"EVOLUCAO_DA_IA/{nome}/pesos")
     
-    # Proteção absoluta contra chaves faltando no banco de dados
-    if not isinstance(pesos_atuais, dict):
-        pesos_atuais = {}
+    if not isinstance(pesos_atuais, dict): pesos_atuais = {}
         
     p_quentes = pesos_atuais.get("peso_quentes", 0.4)
     p_atrasadas = pesos_atuais.get("peso_atrasadas", 0.3)
     p_cooc = pesos_atuais.get("peso_cooc", 0.3)
     
-    pesos_atuais = {
-        "peso_quentes": p_quentes,
-        "peso_atrasadas": p_atrasadas,
-        "peso_cooc": p_cooc
-    }
+    pesos_atuais = {"peso_quentes": p_quentes, "peso_atrasadas": p_atrasadas, "peso_cooc": p_cooc}
 
     if not jogos_antigos or not dezenas_reais:
         db_call("PATCH", f"EVOLUCAO_DA_IA/{nome}/pesos", pesos_atuais)
@@ -139,21 +126,18 @@ def auditar_e_aprender(config, dezenas_reais):
         pesos_atuais["peso_quentes"] = min(0.7, pesos_atuais["peso_quentes"] + 0.05)
         pesos_atuais["peso_atrasadas"] = max(0.1, pesos_atuais["peso_atrasadas"] - 0.05)
 
-    print(f"   📈 Evolução: Média de Acertos: {media_acertos:.2f} | Novos Pesos: {pesos_atuais}")
-    
     db_call("PATCH", f"EVOLUCAO_DA_IA/{nome}/pesos", pesos_atuais)
     return pesos_atuais
 
 # =========================================================================
-# 5. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA E MONTAGEM DE ELITE)
+# 5. OS 5 MOTORES DE IA PROFUNDA E MONTAGEM
 # =========================================================================
 def motor_ia_profunda(slug, config, pesos_cognitivos):
     nome = config["nome"]
-    print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas e Backtesting Global...")
+    print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas...")
     
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}")
-    if not hist or (not isinstance(hist, dict) and not isinstance(hist, list)): 
-        return {}
+    if not hist or (not isinstance(hist, dict) and not isinstance(hist, list)): return {}
     
     dados_h = hist if isinstance(hist, dict) else {str(i): v for i, v in enumerate(hist) if v}
     
@@ -169,7 +153,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     inicio = 0 if slug in ["lotomania", "supersete"] else 1
     fim = 99 if slug == "lotomania" else (9 if slug == "supersete" else config.get("total", 60))
     
-    # --- MAPEAMENTO GLOBAL (DE CIMA A BAIXO NA HISTÓRIA) ---
     for c_id, concurso in concursos_ordenados:
         if not isinstance(concurso, dict): continue
         
@@ -220,16 +203,12 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
     p_quentes = pesos_cognitivos.get("peso_quentes", 0.4)
     p_atrasadas = pesos_cognitivos.get("peso_atrasadas", 0.3)
     
-    print(f"   🔨 Montador: Aplicando Filtro Global de Soma, Pares/Ímpares e Exclusividade...")
     while len(candidatos) < 150 and tentativas < 5000:
         tentativas += 1
         pool = set()
         
-        qtd_quentes_int = int(qtd * p_quentes)
-        pool.update(random.sample(quentes[:30], min(30, qtd_quentes_int)))
-        
-        qtd_atrasadas_int = int(qtd * p_atrasadas)
-        pool.update(random.sample(atrasadas[:20], min(20, qtd_atrasadas_int)))
+        pool.update(random.sample(quentes[:30], min(30, int(qtd * p_quentes))))
+        pool.update(random.sample(atrasadas[:20], min(20, int(qtd * p_atrasadas))))
         
         if pool:
             bola_base = list(pool)[0]
@@ -254,8 +233,6 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
             jogos_unicos.add(assinatura)
             candidatos.append(jg)
             
-    # --- BACKTESTING E RANKING (CONFERINDO CONTRA A HISTÓRIA) ---
-    print(f"   ⚖️ Backtesting Global: Testando {len(candidatos)} jogos contra a história inteira...")
     ranking = []
     min_premio = config.get("min_premio", 11)
     
@@ -298,81 +275,64 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
     hoje = db_call("GET", f"SORTEIO_DE_HOJE/{nome_jogo}")
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome_jogo}/{conc_api}")
     
-    if not isinstance(hoje, dict) or str(hoje.get("numero")) != str(conc_api): 
-        return True
-    if not isinstance(hist, dict): 
-        return True
+    if not isinstance(hoje, dict) or str(hoje.get("numero")) != str(conc_api): return True
+    if not isinstance(hist, dict): return True
 
     for base in [hoje, hist]:
-        if not base.get("data") or base.get("data") == "":
-            print(f"   🔍 Inspetor: 'Data' em branco em {nome_jogo}. Corrigindo banco...")
-            return True
-            
-        if not base.get("premiacoes") or len(base.get("premiacoes")) == 0:
-            print(f"   🔍 Inspetor: Tabela de 'Premiações' vazia em {nome_jogo}.")
-            return True
-            
-        if "Bola1" in base or "Cidade UF" in base:
-            print(f"   🔍 Inspetor: Lixo antigo do Excel detectado em {nome_jogo}.")
-            return True
-            
-        if slug == "timemania" and not base.get("timeCoracao"):
-            print(f"   🔍 Inspetor: Falta o 'Time do Coração' na Timemania!")
-            return True
-            
-        if slug == "diadesorte" and not base.get("mesSorte"):
-            print(f"   🔍 Inspetor: Falta o 'Mês da Sorte' no Dia de Sorte!")
-            return True
-            
-        if slug == "maismilionaria" and not base.get("trevos"):
-            print(f"   🔍 Inspetor: Falta os 'Trevos' na +Milionária!")
-            return True
+        if not base.get("data") or base.get("data") == "": return True
+        if not base.get("premiacoes") or len(base.get("premiacoes")) == 0: return True
+        if "Bola1" in base or "Cidade UF" in base: return True
+        if slug == "timemania" and not base.get("timeCoracao"): return True
+        if slug == "diadesorte" and not base.get("mesSorte"): return True
+        if slug == "maismilionaria" and not base.get("trevos"): return True
             
     return False
 
 # =========================================================================
-# 7. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA E PROXY PREMIUM
-# AQUI ESTÁ A LÓGICA DO JUIZ DE COMPARAÇÃO!
+# 7. A FORÇA BRUTA (6 APIs + PROXY GEO-LOCALIZADO BRASIL)
 # =========================================================================
 def buscar_dados_loteria(slug):
-    SCRAPER_KEY = os.environ.get('SCRAPER_API_KEY')
-    
-    if not SCRAPER_KEY:
-        print("   [!] ERRO FATAL: Chave SCRAPER_API_KEY não encontrada no GitHub Secrets!")
-        return None
-        
-    # Garante que a chave não tem espaços em branco copiados sem querer
-    SCRAPER_KEY = SCRAPER_KEY.strip()
-
+    SCRAPER_KEY = os.environ.get('SCRAPER_API_KEY', '').strip()
     quebrador_cache = int(time.time() * 1000)
+    
     url_caixa = f"https://servicebus2.caixa.gov.br/loterias/api/{slug}?_={quebrador_cache}"
     
-    # Adicionado "&premium=true" para usar IPs de alta segurança do Proxy
-    url_proxy = f"http://api.scraperapi.com?api_key={SCRAPER_KEY}&url={url_caixa}&premium=true"
+    # Montamos a lista de ataque com várias opções para garantir o resultado
+    fontes = []
     
-    fontes = [
-        (url_proxy, "CAIXA VIA PROXY PREMIUM"),
-        (f"https://brasilapi.com.br/api/loterias/v1/{slug}", "BRASIL API")
-    ]
+    if SCRAPER_KEY:
+        # Proxy Premium forçando IP do Brasil (country_code=br)
+        proxy_premium_br = f"http://api.scraperapi.com?api_key={SCRAPER_KEY}&url={url_caixa}&premium=true&country_code=br"
+        proxy_simples_br = f"http://api.scraperapi.com?api_key={SCRAPER_KEY}&url={url_caixa}&country_code=br"
+        fontes.append((proxy_premium_br, "PROXY CAIXA (Premium BR)"))
+        fontes.append((proxy_simples_br, "PROXY CAIXA (Simples BR)"))
+    else:
+        print("   [!] AVISO: Sem chave SCRAPER_API_KEY. Tentando acesso direto (risco de bloqueio).")
+    
+    # Alternativas independentes se a Caixa estiver caída
+    fontes.extend([
+        (url_caixa, "CAIXA OFICIAL DIRETA"),
+        (f"https://brasilapi.com.br/api/loterias/v1/{slug}", "BRASIL API (Primária)"),
+        (f"https://loteriascaixa-api.herokuapp.com/api/{slug}/latest", "API HEROKU (Backup 1)"),
+        (f"https://api.guidi.dev.br/loteria/{slug}/ultimo", "API GUIDI (Backup 2)")
+    ])
     
     resultados_obtidos = []
     
     for url, nome_fonte in fontes:
         try:
-            print(f"   🔎 Consultando {nome_fonte}...")
-            # Faz a busca furando o bloqueio
-            res = sessao.get(url, verify=False, timeout=40)
+            print(f"   🔎 Tentando {nome_fonte}...")
+            # Headers mais limpos para evitar conflito com os proxies
+            res = sessao.get(url, verify=False, timeout=25)
             
             if res.status_code == 200:
                 try:
                     d = res.json()
                 except json.JSONDecodeError:
-                    print(f"   [!] {nome_fonte} retornou uma página de bloqueio HTML.")
+                    print(f"   [!] {nome_fonte} retornou bloqueio/HTML.")
                     continue
                 
                 c = d.get("numero") or d.get("concurso")
-                
-                # Se a API retornou lixo sem número de concurso, ignora ela
                 if not c: continue
                 
                 dt = d.get("dataApuracao") or d.get("data")
@@ -391,7 +351,6 @@ def buscar_dados_loteria(slug):
                     tr = d.get("trevos") or d.get("listaTrevos") or []
                     trevos_lista = [int(x) for x in tr] if tr else []
 
-                # Salva o resultado formatado no "caderno do juiz"
                 resultado_formatado = {
                     "conc": str(c), "data": dt, "dzs": [int(x) for x in dzs] if dzs else [],
                     "acum": d.get("acumulado") or d.get("acumulou"),
@@ -402,28 +361,24 @@ def buscar_dados_loteria(slug):
                     "fonte_oficial": nome_fonte
                 }
                 resultados_obtidos.append(resultado_formatado)
-                break # Se conseguiu sucesso pelo Proxy, já sai do loop e salva tempo
+                # Quebramos o loop pois já achamos o resultado nesta fonte!
+                break 
             else:
-                print(f"   [!] {nome_fonte} negou o acesso (Erro HTTP: {res.status_code})")
+                print(f"   [!] {nome_fonte} falhou (HTTP {res.status_code})")
         except Exception as e:
-            # Mostra o erro no log para você saber o que houve
-            print(f"   [!] Falha de conexão com {nome_fonte}: {e}")
+            print(f"   [!] Erro de conexão com {nome_fonte}: timeout ou recusa.")
             continue
 
-    # LÓGICA DO JUIZ DE COMPARAÇÃO
-    # Avalia qual das APIs entregou o resultado mais novo e completo
     if resultados_obtidos:
         def rankeador(x):
-            # O critério 1 é o MAIOR número do concurso
             num_concurso = int(extrair_id_limpo(x["conc"]) or 0)
-            # O critério 2 é o desempate: quem já tem os rateios (premiacoes) preenchidos ganha
             tem_rateio = 1 if len(x.get("rates", [])) > 0 else 0
             return (num_concurso, tem_rateio)
             
         resultados_obtidos.sort(key=rankeador, reverse=True)
         campeao = resultados_obtidos[0]
         
-        print(f"   🏆 Comparação concluída: A fonte mais atualizada foi {campeao['fonte_oficial']} (Conc. {campeao['conc']})")
+        print(f"   🏆 SUCESSO: Fonte usada foi {campeao['fonte_oficial']} (Conc. {campeao['conc']})")
         return campeao
         
     return None
@@ -434,7 +389,7 @@ def buscar_dados_loteria(slug):
 def efeito_domino(slug, config, d):
     nome = config["nome"]
     c_id = extrair_id_limpo(d["conc"])
-    print(f"   🚀 Distribuindo Pacotes e Limpando Lixo Antigo: {nome} (Conc. {c_id})")
+    print(f"   🚀 Atualizando Firebase e Estatísticas: {nome} (Conc. {c_id})")
 
     pesos_calibrados = auditar_e_aprender(config, d["dzs"])
 
@@ -444,17 +399,14 @@ def efeito_domino(slug, config, d):
         "arrecadacao": d["arrec"], "premiacoes": d["rates"]
     }
     
-    if slug == "timemania":
-        ficha_base["timeCoracao"] = d.get("extra", "")
-    elif slug == "diadesorte":
-        ficha_base["mesSorte"] = d.get("extra", "")
-    elif slug == "maismilionaria":
-        ficha_base["trevos"] = d.get("trevos", [])
+    if slug == "timemania": ficha_base["timeCoracao"] = d.get("extra", "")
+    elif slug == "diadesorte": ficha_base["mesSorte"] = d.get("extra", "")
+    elif slug == "maismilionaria": ficha_base["trevos"] = d.get("trevos", [])
 
     db_call("PUT", f"SORTEIO_DE_HOJE/{nome}", ficha_base)
     db_call("PUT", f"HISTORICOS_DE_SORTEIOS/{nome}/{c_id}", ficha_base)
 
-    texto_estimativa = f"Estimativa de prêmio do próximo concurso {d['p_data']}" if d.get('p_data') else "Estimativa de prêmio do próximo concurso a definir"
+    texto_estimativa = f"Estimativa para o concurso {d['p_data']}" if d.get('p_data') else "Estimativa do próximo concurso a definir"
     ficha_prox = {"texto_data": texto_estimativa, "valor_estimativa": formatar_moeda(d["p_est"])}
     db_call("PUT", f"PROXIMO_CONCURSO/{nome}", ficha_prox)
 
@@ -463,13 +415,10 @@ def efeito_domino(slug, config, d):
     
     palpites_novos = motor_ia_profunda(slug, config, pesos_calibrados)
     
-    # Salva na pasta original 
     db_call("PUT", f"ESTATISTICAS/{nome}/jogos_prontos", palpites_novos)
-    
-    # Salva também na pasta isolada de Estatísticas de Alta Performance
     pasta_isolada = f"{nome.replace('-', '').capitalize()}_Estatisticas/jogos_prontos"
     db_call("PUT", pasta_isolada, palpites_novos)
-    print(f"   ✅ Funil de Elite Concluído. 50 jogos enviados para a Nuvem!")
+    print(f"   ✅ Funil concluído para {nome}!")
 
 # =========================================================================
 # 9. MOTOR CENTRAL DO SERVIDOR (GITHUB ACTIONS)
@@ -479,31 +428,29 @@ def main():
         agora_br = datetime.now(timezone.utc) - timedelta(hours=3)
         hora = agora_br.hour
         print(f"=============================================================")
-        print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA (INSPETOR) - {agora_br.strftime('%d/%m/%Y %H:%M')}")
+        print(f"🤖 ROBÔ LOTERIAS IA PROFUNDA - {agora_br.strftime('%d/%m/%Y %H:%M')}")
         print(f"=============================================================")
 
         preparar_infraestrutura_frontend()
 
-        if hora == 9:
-            print("🌅 Repescagem das 09h. Parada Segura Ativa (Evitando Loop de Falha da Caixa).")
+        if hora == 9: print("🌅 Repescagem das 09h.")
 
         for slug, config in JOGOS.items():
-            print(f"\n[Processando] {config['nome']}")
+            print(f"\n[Buscando] {config['nome']}...")
             dados = buscar_dados_loteria(slug)
             
             if dados:
                 if banco_esta_incompleto(config["nome"], slug, dados["conc"]):
                     efeito_domino(slug, config, dados)
-                    print(f"   ✅ Sucesso: Lixo excluído! Nuvem formatada e Algoritmos Calibrados para {config['nome']}.")
                 else:
-                    print(f"   ✔️ {config['nome']} 100% íntegro. Nada de errado encontrado.")
+                    print(f"   ✔️ {config['nome']} já está 100% atualizado no banco.")
             else:
-                print(f"   🚨 Erro Crítico: Conexão recusada nas 3 APIs.")
+                print(f"   🚨 Erro: Todas as APIs falharam para {config['nome']}.")
 
-        print(f"\n🏁 SESSÃO DE IA FINALIZADA COM SUCESSO.")
+        print(f"\n🏁 SESSÃO FINALIZADA.")
         
     except Exception as e:
-        print(f"\n🚨 ERRO FATAL NO ROBÔ CAPTURADO E EVITADO: {e}")
+        print(f"\n🚨 ERRO FATAL: {e}")
         traceback.print_exc()
 
 if __name__ == "__main__":
