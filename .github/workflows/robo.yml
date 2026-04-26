@@ -27,7 +27,8 @@ jobs:
           python-version: '3.10'
           
       - name: Instalar Dependências
-        run: pip install requests
+        # --- AQUI ESTÁ A INCLUSÃO DO CURL_CFFI ---
+        run: pip install requests curl_cffi
         
       - name: Rodar Motor Principal
         run: python main.py
