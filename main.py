@@ -8,9 +8,6 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 
-# --- NOVA ADIÇÃO: Biblioteca anti-bloqueio ---
-from curl_cffi import requests as curl_requests 
-
 # Desativa avisos de SSL para estabilidade em servidores nuvem
 requests.packages.urllib3.disable_warnings()
 
@@ -39,8 +36,7 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9"
 }
 
-# --- NOVA ADIÇÃO: Disfarce de Google Chrome para evitar bloqueio da Caixa ---
-sessao = curl_requests.Session(impersonate="chrome110")
+sessao = requests.Session()
 
 # =========================================================================
 # 2. FUNÇÕES DE APOIO E COMUNICAÇÃO FIREBASE
@@ -67,7 +63,7 @@ def extrair_id_limpo(valor):
     return str(int(match.group())) if match else None
 
 # =========================================================================
-# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP
+# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP (NOVO)
 # =========================================================================
 def preparar_infraestrutura_frontend():
     print("   ⚙️ Verificando infraestrutura de Design e Segurança do App...")
@@ -335,17 +331,26 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
     return False
 
 # =========================================================================
-# 7. CAPTURA DE DADOS REAIS (AGORA COM ANTI-BLOQUEIO E LOGS DE ERRO)
+# 7. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA E PROXY (NOVO)
+# AQUI ESTÁ A LÓGICA DO JUIZ DE COMPARAÇÃO!
 # =========================================================================
 def buscar_dados_loteria(slug):
+    # Pega a chave que você salvou no cofre do GitHub
+    SCRAPER_KEY = os.environ.get('SCRAPER_API_KEY')
+    
+    if not SCRAPER_KEY:
+        print("   [!] ERRO FATAL: Chave SCRAPER_API_KEY não encontrada no GitHub Secrets!")
+        return None
+
     quebrador_cache = int(time.time() * 1000)
     
+    # URL da Caixa disfarçada passando pela rede residencial do ScraperAPI
+    url_caixa = f"https://servicebus2.caixa.gov.br/loterias/api/{slug}?_={quebrador_cache}"
+    url_proxy = f"http://api.scraperapi.com?api_key={SCRAPER_KEY}&url={url_caixa}"
+    
     fontes = [
-        (f"https://servicebus2.caixa.gov.br/loterias/api/{slug}?_={quebrador_cache}", "CAIXA"),
+        (url_proxy, "CAIXA VIA PROXY RESIDENCIAL"),
         (f"https://brasilapi.com.br/api/loterias/v1/{slug}", "BRASIL API")
-        # Espelho HEROKU foi apenas comentado para não remover código seu, 
-        # mas ele não será executado pois está desativado mundialmente.
-        # (f"https://loteriascaixa-api.herokuapp.com/api/{slug}/latest", "ESPELHO HEROKU")
     ]
     
     resultados_obtidos = []
@@ -353,23 +358,18 @@ def buscar_dados_loteria(slug):
     for url, nome_fonte in fontes:
         try:
             print(f"   🔎 Consultando {nome_fonte}...")
-            # AQUI ESTÁ A MÁGICA: O robô usa a sessão blindada (curl_cffi)
-            res = sessao.get(url, headers=HEADERS, verify=False, timeout=15)
-            
+            res = sessao.get(url, headers=HEADERS, verify=False, timeout=30)
             if res.status_code == 200:
-                # Tenta ler como JSON. Se a Caixa devolver HTML de bloqueio, interceptamos.
                 try:
                     d = res.json()
                 except json.JSONDecodeError:
-                    print(f"   [!] {nome_fonte} retornou uma página de bloqueio em vez de dados (Firewall).")
+                    print(f"   [!] {nome_fonte} retornou uma página de bloqueio HTML.")
                     continue
                 
                 c = d.get("numero") or d.get("concurso")
                 
                 # Se a API retornou lixo sem número de concurso, ignora ela
-                if not c: 
-                    print(f"   [!] {nome_fonte} não retornou o número do concurso válido.")
-                    continue
+                if not c: continue
                 
                 dt = d.get("dataApuracao") or d.get("data")
                 dzs = d.get("listaDezenas") or d.get("dezenas")
@@ -398,11 +398,11 @@ def buscar_dados_loteria(slug):
                     "fonte_oficial": nome_fonte
                 }
                 resultados_obtidos.append(resultado_formatado)
+                break # Se conseguiu sucesso pelo Proxy, já sai do loop e salva tempo
             else:
-                 print(f"   [!] {nome_fonte} negou o acesso (Erro HTTP: {res.status_code}).")
-                 
+                print(f"   [!] {nome_fonte} negou o acesso (Erro HTTP: {res.status_code})")
         except Exception as e:
-            # AGORA OS ERROS APARECEM NO CONSOLE DO GITHUB ACTIONS!
+            # Mostra o erro no log para você saber o que houve
             print(f"   [!] Falha de conexão com {nome_fonte}: {e}")
             continue
 
@@ -494,7 +494,7 @@ def main():
                 else:
                     print(f"   ✔️ {config['nome']} 100% íntegro. Nada de errado encontrado.")
             else:
-                print(f"   🚨 Erro Crítico: Conexão recusada nas APIs e bloqueios registrados nos logs acima.")
+                print(f"   🚨 Erro Crítico: Conexão recusada nas APIs e bloqueios registrados.")
 
         print(f"\n🏁 SESSÃO DE IA FINALIZADA COM SUCESSO.")
         
