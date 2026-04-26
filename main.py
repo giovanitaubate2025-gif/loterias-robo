@@ -331,25 +331,27 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
     return False
 
 # =========================================================================
-# 7. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA E PROXY (NOVO)
+# 7. CAPTURA DE DADOS REAIS COM EXTRAÇÃO PROFUNDA E PROXY PREMIUM
 # AQUI ESTÁ A LÓGICA DO JUIZ DE COMPARAÇÃO!
 # =========================================================================
 def buscar_dados_loteria(slug):
-    # Pega a chave que você salvou no cofre do GitHub
     SCRAPER_KEY = os.environ.get('SCRAPER_API_KEY')
     
     if not SCRAPER_KEY:
         print("   [!] ERRO FATAL: Chave SCRAPER_API_KEY não encontrada no GitHub Secrets!")
         return None
+        
+    # Garante que a chave não tem espaços em branco copiados sem querer
+    SCRAPER_KEY = SCRAPER_KEY.strip()
 
     quebrador_cache = int(time.time() * 1000)
-    
-    # URL da Caixa disfarçada passando pela rede residencial do ScraperAPI
     url_caixa = f"https://servicebus2.caixa.gov.br/loterias/api/{slug}?_={quebrador_cache}"
-    url_proxy = f"http://api.scraperapi.com?api_key={SCRAPER_KEY}&url={url_caixa}"
+    
+    # Adicionado "&premium=true" para usar IPs de alta segurança do Proxy
+    url_proxy = f"http://api.scraperapi.com?api_key={SCRAPER_KEY}&url={url_caixa}&premium=true"
     
     fontes = [
-        (url_proxy, "CAIXA VIA PROXY RESIDENCIAL"),
+        (url_proxy, "CAIXA VIA PROXY PREMIUM"),
         (f"https://brasilapi.com.br/api/loterias/v1/{slug}", "BRASIL API")
     ]
     
@@ -358,7 +360,9 @@ def buscar_dados_loteria(slug):
     for url, nome_fonte in fontes:
         try:
             print(f"   🔎 Consultando {nome_fonte}...")
-            res = sessao.get(url, headers=HEADERS, verify=False, timeout=30)
+            # Faz a busca furando o bloqueio
+            res = sessao.get(url, verify=False, timeout=40)
+            
             if res.status_code == 200:
                 try:
                     d = res.json()
@@ -494,7 +498,7 @@ def main():
                 else:
                     print(f"   ✔️ {config['nome']} 100% íntegro. Nada de errado encontrado.")
             else:
-                print(f"   🚨 Erro Crítico: Conexão recusada nas APIs e bloqueios registrados.")
+                print(f"   🚨 Erro Crítico: Conexão recusada nas 3 APIs.")
 
         print(f"\n🏁 SESSÃO DE IA FINALIZADA COM SUCESSO.")
         
