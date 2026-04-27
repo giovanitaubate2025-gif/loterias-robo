@@ -8,13 +8,14 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from collections import Counter
 
-# Desativa avisos de SSL
+# Desativa avisos de SSL para estabilidade
 requests.packages.urllib3.disable_warnings()
 
 # =========================================================================
 # 1. CONFIGURAÇÕES E CREDENCIAIS
 # =========================================================================
-SECRET_FIREBASE = os.environ.get('FIREBASE_KEY', '7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd')
+# AGORA É BLINDADO: Puxa a chave do GitHub Actions. Se testar no seu PC, ele usa a string vazia ou a que você colocar no segundo parâmetro.
+SECRET_FIREBASE = os.environ.get("FIREBASE_KEY", "COLOQUE_SUA_CHAVE_AQUI")
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 
 JOGOS = {
@@ -30,16 +31,15 @@ JOGOS = {
 }
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
     "Accept": "application/json",
-    "Referer": "https://loterias.caixa.gov.br/",
-    "Accept-Language": "pt-BR,pt;q=0.9"
+    "Referer": "https://loterias.caixa.gov.br/"
 }
 
 sessao = requests.Session()
 
 # =========================================================================
-# 2. FUNÇÕES DE APOIO E COMUNICAÇÃO FIREBASE
+# 2. FUNÇÕES FIREBASE
 # =========================================================================
 def db_call(method, path, data=None):
     url = f"{URL_FIREBASE}{path}.json?auth={SECRET_FIREBASE}"
@@ -50,7 +50,6 @@ def db_call(method, path, data=None):
         if method == "PATCH": return sessao.patch(url, data=dados_json.encode('utf-8'), timeout=None)
         if method == "DELETE": return sessao.delete(url, timeout=30)
     except Exception as e: 
-        print(f"   [!] Erro de comunicação Firebase: {e}")
         return None
 
 def formatar_moeda(v):
@@ -62,45 +61,125 @@ def extrair_id_limpo(valor):
     return str(int(match.group())) if match else None
 
 # =========================================================================
-# 3. PREPARAÇÃO DA NUVEM PARA OS NOVOS RECURSOS DO APP
+# 3. CAPTURA DE DADOS REAIS
+# =========================================================================
+def buscar_dados_loteria(slug, concurso_id=None):
+    quebrador_cache = int(time.time() * 1000)
+    sufixo = f"/{concurso_id}" if concurso_id else ""
+    
+    fontes = [
+        (f"https://servicebus2.caixa.gov.br/loterias/api/{slug}{sufixo}?_={quebrador_cache}", "CAIXA"),
+        (f"https://brasilapi.com.br/api/loterias/v1/{slug}{sufixo}", "BRASIL API"),
+        (f"https://loteriascaixa-api.herokuapp.com/api/{slug}/{concurso_id if concurso_id else 'latest'}", "ESPELHO HEROKU")
+    ]
+    
+    resultados_obtidos = []
+    
+    for url, nome_fonte in fontes:
+        try:
+            res = sessao.get(url, headers=HEADERS, verify=False, timeout=10)
+            if res.status_code == 200:
+                d = res.json()
+                c = d.get("numero") or d.get("concurso")
+                if not c: continue
+                
+                dt = d.get("dataApuracao") or d.get("data")
+                dzs = d.get("listaDezenas") or d.get("dezenas")
+                p_data = d.get("dataPróximoConcurso") or d.get("dataProximoConcurso") or d.get("data_proximo_concurso", "")
+                p_est = d.get("valorEstimadoPróximoConcurso") or d.get("valorEstimadoProximoConcurso") or d.get("valor_estimado_proximo_concurso", 0)
+                
+                extra_str = ""
+                trevos_lista = []
+                
+                if slug == "timemania": extra_str = d.get("nomeTimeCoracaoMessorte") or d.get("timeCoracao") or ""
+                elif slug == "diadesorte": extra_str = d.get("nomeTimeCoracaoMessorte") or d.get("mesSorte") or ""
+                elif slug == "maismilionaria":
+                    tr = d.get("trevos") or d.get("listaTrevos") or []
+                    trevos_lista = [int(x) for x in tr] if tr else []
+
+                resultado_formatado = {
+                    "conc": str(c), "data": dt, "dzs": [int(x) for x in dzs] if dzs else [],
+                    "acum": d.get("acumulado") or d.get("acumulou"),
+                    "arrec": d.get("valorArrecadado") or d.get("valor_arrecadado", 0),
+                    "rates": d.get("listaRateioPremio") or d.get("premiacoes", []),
+                    "p_data": p_data, "p_est": p_est,
+                    "extra": extra_str, "trevos": trevos_lista,
+                    "fonte_oficial": nome_fonte
+                }
+                resultados_obtidos.append(resultado_formatado)
+        except: continue
+
+    if resultados_obtidos:
+        resultados_obtidos.sort(key=lambda x: (int(extrair_id_limpo(x["conc"]) or 0), len(x.get("rates", []))), reverse=True)
+        return resultados_obtidos[0]
+        
+    return None
+
+# =========================================================================
+# 4. TAPA-BURACOS MODO TURBO (SEM LIMITES)
+# =========================================================================
+def salvar_historico_antigo(slug, config, d):
+    nome = config["nome"]
+    c_id = extrair_id_limpo(d["conc"])
+    ficha_base = {
+        "numero": c_id, "data": d["data"], "dezenas": d["dzs"],
+        "acumulou": "SIM" if d["acum"] else "NÃO",
+        "arrecadacao": d["arrec"], "premiacoes": d["rates"]
+    }
+    if slug == "timemania": ficha_base["timeCoracao"] = d.get("extra", "")
+    elif slug == "diadesorte": ficha_base["mesSorte"] = d.get("extra", "")
+    elif slug == "maismilionaria": ficha_base["trevos"] = d.get("trevos", [])
+
+    db_call("PUT", f"HISTORICOS_DE_SORTEIOS/{nome}/{c_id}", ficha_base)
+
+def auditar_e_completar_historico(slug, config, ultimo_conc):
+    nome = config["nome"]
+    chaves_hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}?shallow=true")
+    
+    if not chaves_hist: conc_salvos = []
+    else: conc_salvos = [int(k) for k in chaves_hist.keys() if str(k).isdigit()]
+    
+    faltantes = [i for i in range(1, int(ultimo_conc) + 1) if i not in conc_salvos]
+    
+    if faltantes:
+        print(f"   ⚠️ Faltam {len(faltantes)} concursos.")
+        print(f"   🚀 MODO TURBO LIGADO: Baixando todos de uma vez sem parar...")
+        
+        # Inverte a ordem para baixar do mais recente para o mais antigo (ou vice versa, tanto faz)
+        for c_id in faltantes:
+            dados_antigos = buscar_dados_loteria(slug, c_id)
+            if dados_antigos:
+                salvar_historico_antigo(slug, config, dados_antigos)
+                print(f"   ✅ Baixado: {nome} (Conc. {c_id})")
+            else:
+                print(f"   ❌ Falhou: {nome} (Conc. {c_id}) - API não respondeu.")
+
+# =========================================================================
+# 5. OS MOTORES (IA, AUDITORIA, DOMINÓ) E INFRAESTRUTURA
 # =========================================================================
 def preparar_infraestrutura_frontend():
-    print("   ⚙️ Verificando infraestrutura de Design e Segurança do App...")
-    
     config_atual = db_call("GET", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL")
     if not isinstance(config_atual, dict):
         config_padrao = {
             "tema_metalico": "padrao", "usar_cores_manuais": False,
-            "cor_texto_btn": "#ffffff", "cor_fundo_btn1": "#31006F",
-            "cor_fundo_btn2": "#f39c12", "imagem_fundo_url": "", 
-            "boloes_status": "oculto", "boloes_link": "https://seulinkpopular.com",
-            "boloes_senha": "", "rodape_ativo": False,
-            "rodape_texto": "Gerador Oficial Inteligente - Boa Sorte!"
+            "cor_texto_btn": "#ffffff", "cor_fundo_btn1": "#31006F", "cor_fundo_btn2": "#f39c12",
+            "imagem_fundo_url": "", "boloes_status": "oculto", "boloes_link": "https://seulinkpopular.com",
+            "boloes_senha": "", "rodape_ativo": False, "rodape_texto": "Gerador Oficial Inteligente"
         }
         db_call("PUT", "SISTEMA_ADM/CONFIG_VISUAL_GLOBAL", config_padrao)
-        print("   ✅ Gavetas criadas!")
 
     cadastros = db_call("GET", "CADASTRO_DE_CLIENTES")
     if not isinstance(cadastros, dict):
-        db_call("PUT", "CADASTRO_DE_CLIENTES/info_sistema", {"criado_por": "Robô IA Trator", "status": "Pronto para receber cadastros"})
-        print("   ✅ Pasta de Clientes blindada!")
+        db_call("PUT", "CADASTRO_DE_CLIENTES/info_sistema", {"criado_por": "Robô IA Trator", "status": "Pronto"})
 
-# =========================================================================
-# 4. MOTOR 6: MACHINE LEARNING (O ALGORITMO PAI QUE APRENDE)
-# =========================================================================
 def auditar_e_aprender(config, dezenas_reais):
     nome = config["nome"]
-    print(f"   🧠 ML-Auditor: Avaliando taxa de acerto do robô para {nome}...")
-    
     jogos_antigos = db_call("GET", f"ESTATISTICAS/{nome}/jogos_prontos")
-    pesos_atuais = db_call("GET", f"EVOLUCAO_DA_IA/{nome}/pesos")
+    pesos_atuais = db_call("GET", f"EVOLUCAO_DA_IA/{nome}/pesos") or {}
     
-    if not isinstance(pesos_atuais, dict): pesos_atuais = {}
-        
     p_quentes = pesos_atuais.get("peso_quentes", 0.4)
     p_atrasadas = pesos_atuais.get("peso_atrasadas", 0.3)
     p_cooc = pesos_atuais.get("peso_cooc", 0.3)
-    
     pesos_atuais = {"peso_quentes": p_quentes, "peso_atrasadas": p_atrasadas, "peso_cooc": p_cooc}
 
     if not jogos_antigos or not dezenas_reais:
@@ -113,8 +192,7 @@ def auditar_e_aprender(config, dezenas_reais):
 
     for chave, jogo in jogos_antigos.items():
         dzs_jogo = jogo["numeros"] if isinstance(jogo, dict) else jogo
-        dzs_int = set(int(x) for x in dzs_jogo)
-        acertos = len(dzs_int.intersection(dezenas_reais_set))
+        acertos = len(set(int(x) for x in dzs_jogo).intersection(dezenas_reais_set))
         total_acertos += acertos
 
     media_acertos = total_acertos / qtd_jogos if qtd_jogos > 0 else 0
@@ -130,17 +208,12 @@ def auditar_e_aprender(config, dezenas_reais):
     db_call("PATCH", f"EVOLUCAO_DA_IA/{nome}/pesos", pesos_atuais)
     return pesos_atuais
 
-# =========================================================================
-# 5. OS 5 MOTORES DE IA PROFUNDA (ESTATÍSTICA E MONTAGEM)
-# =========================================================================
 def motor_ia_profunda(slug, config, pesos_cognitivos):
     nome = config["nome"]
-    print(f"   ⚙️ Motor IA Profunda: Calculando Probabilidades Múltiplas...")
-    
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome}")
-    if not hist or (not isinstance(hist, dict) and not isinstance(hist, list)): return {}
-    
+    if not hist: return {}
     dados_h = hist if isinstance(hist, dict) else {str(i): v for i, v in enumerate(hist) if v}
+    
     todas_dz = []
     matriz_afinidade = Counter()
     atrasos = {} 
@@ -157,46 +230,33 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
         dzs_int = []
         if "Bola1" in concurso:
             for i in range(1, 100):
-                b_chave = f"Bola{i}"
-                if b_chave in concurso:
-                    try: dzs_int.append(int(concurso[b_chave]))
+                if f"Bola{i}" in concurso:
+                    try: dzs_int.append(int(concurso[f"Bola{i}"]))
                     except: pass
         else:
-            dzs = concurso.get("dezenas", [])
-            dzs_int = [int(x) for x in dzs] if dzs else []
+            dzs_int = [int(x) for x in concurso.get("dezenas", [])]
             
         if not dzs_int: continue
-        
         dzs_int = sorted(list(set(dzs_int)))
         historico_sets.append(set(dzs_int))
         todas_dz.extend(dzs_int)
         somas_historicas.append(sum(dzs_int))
-        impares = len([n for n in dzs_int if n % 2 != 0])
-        pares_impares[f"{impares}i"] += 1
-        
+        pares_impares[f"{len([n for n in dzs_int if n % 2 != 0])}i"] += 1
         for num in range(inicio, fim + 1):
             if num in dzs_int: atrasos[num] = 0
             else: atrasos[num] = atrasos.get(num, 0) + 1
-            
         for i in range(len(dzs_int)):
             for j in range(i + 1, len(dzs_int)):
                 matriz_afinidade[tuple(sorted((dzs_int[i], dzs_int[j])))] += 1
 
-    freq = Counter(todas_dz)
-    quentes = [x[0] for x in freq.most_common()]
+    quentes = [x[0] for x in Counter(todas_dz).most_common()]
     atrasadas = sorted(atrasos.keys(), key=lambda k: atrasos[k], reverse=True)
     media_soma = sum(somas_historicas) / len(somas_historicas) if somas_historicas else 0
     margem_soma = media_soma * 0.25 
-    
-    padrao_frequente = pares_impares.most_common(1)
-    imp_target = int(padrao_frequente[0][0].replace('i','')) if padrao_frequente else (config["qtd"] // 2)
+    imp_target = int(pares_impares.most_common(1)[0][0].replace('i','')) if pares_impares else (config["qtd"] // 2)
 
-    candidatos = []
-    jogos_unicos = set()
-    tentativas = 0
-    qtd = config["qtd"]
-    p_quentes = pesos_cognitivos.get("peso_quentes", 0.4)
-    p_atrasadas = pesos_cognitivos.get("peso_atrasadas", 0.3)
+    candidatos, jogos_unicos, tentativas = [], set(), 0
+    qtd, p_quentes, p_atrasadas = config["qtd"], pesos_cognitivos.get("peso_quentes", 0.4), pesos_cognitivos.get("peso_atrasadas", 0.3)
     
     while len(candidatos) < 150 and tentativas < 5000:
         tentativas += 1
@@ -209,62 +269,41 @@ def motor_ia_profunda(slug, config, pesos_cognitivos):
             amigos = [par for par in matriz_afinidade.keys() if bola_base in par]
             if amigos:
                 amigos.sort(key=lambda x: matriz_afinidade[x], reverse=True)
-                melhor_amigo = amigos[0][1] if amigos[0][0] == bola_base else amigos[0][0]
-                pool.add(melhor_amigo)
+                pool.add(amigos[0][1] if amigos[0][0] == bola_base else amigos[0][0])
         
         while len(pool) < qtd: pool.add(random.randint(inicio, fim))
-            
         jg = sorted(list(pool)[:qtd])
-        soma_jogo = sum(jg)
-        qtd_impares = len([n for n in jg if n % 2 != 0])
-        passou_juiz_soma = (media_soma - margem_soma) <= soma_jogo <= (media_soma + margem_soma)
-        passou_impares = abs(qtd_impares - imp_target) <= 1
+        passou_juiz_soma = (media_soma - margem_soma) <= sum(jg) <= (media_soma + margem_soma)
+        passou_impares = abs(len([n for n in jg if n % 2 != 0]) - imp_target) <= 1
         assinatura = "-".join(str(x) for x in jg)
         
         if assinatura not in jogos_unicos and ((passou_juiz_soma and passou_impares) or tentativas > 3000):
             jogos_unicos.add(assinatura)
             candidatos.append(jg)
             
-    ranking = []
-    min_premio = config.get("min_premio", 11)
-    
+    ranking, min_premio = [], config.get("min_premio", 11)
     for jg in candidatos:
         jogo_set = set(jg)
-        score = 0
-        for hist_set in historico_sets:
-            acertos = len(jogo_set.intersection(hist_set))
-            if acertos >= min_premio: score += (acertos - min_premio + 1) ** 4
+        score = sum((len(jogo_set.intersection(h)) - min_premio + 1) ** 4 for h in historico_sets if len(jogo_set.intersection(h)) >= min_premio)
         ranking.append({ "numeros": jg, "score": score })
-        
     ranking.sort(key=lambda x: x["score"], reverse=True)
-    palpites = {}
     
+    palpites = {}
     for i in range(min(50, len(ranking))):
-        idx = i + 1
-        jg_obj = ranking[i]
-        status_txt = "🔥 JOGO QUENTE (TOP 3)" if idx <= 3 else "IA CLOUD BLINDADA"
-        p_obj = {"numeros": [f"{x:02d}" for x in jg_obj["numeros"]], "taxa_acerto": jg_obj["score"], "status": status_txt}
-        
-        if "trevos" in config:
-            t = sorted(random.sample(range(1, 7), 2))
-            p_obj["trevos"] = [f"{x:02d}" for x in t]
-            
-        palpites[f"jogo_{idx:02d}"] = p_obj
-            
+        p_obj = {
+            "numeros": [f"{x:02d}" for x in ranking[i]["numeros"]],
+            "taxa_acerto": ranking[i]["score"],
+            "status": "🔥 JOGO QUENTE (TOP 3)" if i < 3 else "IA CLOUD BLINDADA"
+        }
+        if "trevos" in config: p_obj["trevos"] = [f"{x:02d}" for x in sorted(random.sample(range(1, 7), 2))]
+        palpites[f"jogo_{i+1:02d}"] = p_obj
     return palpites
 
-# =========================================================================
-# 6. INSPETOR IMPLACÁVEL DE ERROS DA NUVEM (AGORA MAIS ESPERTO)
-# =========================================================================
 def banco_esta_incompleto(nome_jogo, slug, conc_api):
     hoje = db_call("GET", f"SORTEIO_DE_HOJE/{nome_jogo}")
     hist = db_call("GET", f"HISTORICOS_DE_SORTEIOS/{nome_jogo}/{conc_api}")
     
-    # Exibe no painel preto do Github o que ele está lendo para não ser enganado!
-    concurso_firebase = hoje.get("numero") if isinstance(hoje, dict) else "NENHUM"
-    print(f"   📊 Conferindo Banco de Dados: (Firebase = {concurso_firebase}) vs (Caixa Oficial = {conc_api})")
-
-    if str(concurso_firebase) != str(conc_api): return True
+    if not isinstance(hoje, dict) or str(hoje.get("numero")) != str(conc_api): return True
     if not isinstance(hist, dict): return True
 
     for base in [hoje, hist]:
@@ -274,118 +313,19 @@ def banco_esta_incompleto(nome_jogo, slug, conc_api):
         if slug == "timemania" and not base.get("timeCoracao"): return True
         if slug == "diadesorte" and not base.get("mesSorte"): return True
         if slug == "maismilionaria" and not base.get("trevos"): return True
-            
     return False
 
-# =========================================================================
-# 7. A REDE DE PROXIES MUNDIAIS (A ARMA DEFINITIVA)
-# =========================================================================
-def buscar_dados_loteria(slug):
-    SCRAPER_KEY = os.environ.get('SCRAPER_API_KEY', '').strip()
-    quebrador_cache = int(time.time() * 1000)
-    
-    # Este é o endereço raiz de onde saem os dados originais
-    url_caixa = f"https://servicebus2.caixa.gov.br/loterias/api/{slug}?_={quebrador_cache}"
-    fontes = []
-    
-    if SCRAPER_KEY:
-        # ATENÇÃO: Removida a configuração "Premium" e "Country". O plano gratuito rodará liso.
-        proxy_simples = f"http://api.scraperapi.com?api_key={SCRAPER_KEY}&url={url_caixa}"
-        fontes.append((proxy_simples, "SCRAPER-API"))
-    else:
-        print("   [!] Aviso: A chave do ScraperAPI não foi encontrada. Prosseguindo para as rotas alternativas.")
-
-    # Adicionamos 4 ferramentas públicas que disfarçam a requisição para não dar 403.
-    # A Brasil API, Guidi e Heroku foram removidas para sempre para evitar que o robô seja enganado por dados velhos.
-    fontes.extend([
-        (f"https://api.allorigins.win/raw?url={url_caixa}", "PROXY ALL-ORIGINS"),
-        (f"https://api.codetabs.com/v1/proxy?quest={url_caixa}", "PROXY CODE-TABS"),
-        (f"https://corsproxy.io/?{url_caixa}", "PROXY CORS-IO"),
-        (url_caixa, "CAIXA DIRETA (Sem Disfarce)")
-    ])
-    
-    resultados_obtidos = []
-    
-    for url, nome_fonte in fontes:
-        try:
-            print(f"   🔎 Tentando perfurar com: {nome_fonte}...")
-            
-            # Quando usa Proxy público, não enviamos headers de navegador para não disparar o alarme de segurança deles.
-            headers_usar = {} if "PROXY" in nome_fonte else HEADERS 
-            
-            res = sessao.get(url, headers=headers_usar, verify=False, timeout=30)
-            
-            if res.status_code == 200:
-                try: d = res.json()
-                except json.JSONDecodeError: 
-                    print(f"   [!] O firewall bloqueou o {nome_fonte} (retornou página HTML).")
-                    continue
-                
-                c = d.get("numero") or d.get("concurso")
-                if not c: continue
-                
-                dt = d.get("dataApuracao") or d.get("data")
-                dzs = d.get("listaDezenas") or d.get("dezenas")
-                p_data = d.get("dataPróximoConcurso") or d.get("dataProximoConcurso") or d.get("data_proximo_concurso", "")
-                p_est = d.get("valorEstimadoPróximoConcurso") or d.get("valorEstimadoProximoConcurso") or d.get("valor_estimado_proximo_concurso", 0)
-                
-                extra_str = ""
-                trevos_lista = []
-                
-                if slug == "timemania": extra_str = d.get("nomeTimeCoracaoMessorte") or d.get("time_do_coracao") or d.get("timeCoracao") or ""
-                elif slug == "diadesorte": extra_str = d.get("nomeTimeCoracaoMessorte") or d.get("mes_da_sorte") or d.get("mesSorte") or ""
-                elif slug == "maismilionaria":
-                    tr = d.get("trevos") or d.get("listaTrevos") or []
-                    trevos_lista = [int(x) for x in tr] if tr else []
-
-                resultado_formatado = {
-                    "conc": str(c), "data": dt, "dzs": [int(x) for x in dzs] if dzs else [],
-                    "acum": d.get("acumulado") or d.get("acumulou"),
-                    "arrec": d.get("valorArrecadado") or d.get("valor_arrecadado", 0),
-                    "rates": d.get("listaRateioPremio") or d.get("premiacoes", []),
-                    "p_data": p_data, "p_est": p_est,
-                    "extra": extra_str, "trevos": trevos_lista,
-                    "fonte_oficial": nome_fonte
-                }
-                resultados_obtidos.append(resultado_formatado)
-                # Conseguimos o JSON oficial! Interrompe a busca.
-                break 
-            else:
-                print(f"   [!] {nome_fonte} falhou (Erro HTTP: {res.status_code})")
-        except Exception as e:
-            print(f"   [!] Ocorreu um erro de rede com {nome_fonte}.")
-            continue
-
-    if resultados_obtidos:
-        def rankeador(x):
-            num_concurso = int(extrair_id_limpo(x["conc"]) or 0)
-            tem_rateio = 1 if len(x.get("rates", [])) > 0 else 0
-            return (num_concurso, tem_rateio)
-            
-        resultados_obtidos.sort(key=rankeador, reverse=True)
-        campeao = resultados_obtidos[0]
-        
-        print(f"   🏆 SUCESSO: A leitura do concurso [{campeao['conc']}] foi feita através do {campeao['fonte_oficial']}")
-        return campeao
-        
-    return None
-
-# =========================================================================
-# 8. EFEITO DOMINÓ (ROTEAMENTO E DISTRIBUIÇÃO BLINDADOS)
-# =========================================================================
 def efeito_domino(slug, config, d):
     nome = config["nome"]
     c_id = extrair_id_limpo(d["conc"])
-    print(f"   🚀 ATUALIZANDO NUVEM: Enviando Concurso Oficial [{c_id}] para {nome}...")
+    print(f"   🚀 Distribuindo Pacotes e IA: {nome} (Conc. {c_id})")
 
     pesos_calibrados = auditar_e_aprender(config, d["dzs"])
-
     ficha_base = {
         "numero": c_id, "data": d["data"], "dezenas": d["dzs"],
         "acumulou": "SIM" if d["acum"] else "NÃO",
         "arrecadacao": d["arrec"], "premiacoes": d["rates"]
     }
-    
     if slug == "timemania": ficha_base["timeCoracao"] = d.get("extra", "")
     elif slug == "diadesorte": ficha_base["mesSorte"] = d.get("extra", "")
     elif slug == "maismilionaria": ficha_base["trevos"] = d.get("trevos", [])
@@ -393,52 +333,47 @@ def efeito_domino(slug, config, d):
     db_call("PUT", f"SORTEIO_DE_HOJE/{nome}", ficha_base)
     db_call("PUT", f"HISTORICOS_DE_SORTEIOS/{nome}/{c_id}", ficha_base)
 
-    texto_estimativa = f"Estimativa de prêmio do próximo concurso {d['p_data']}" if d.get('p_data') else "Estimativa de prêmio do próximo concurso a definir"
-    ficha_prox = {"texto_data": texto_estimativa, "valor_estimativa": formatar_moeda(d["p_est"])}
-    db_call("PUT", f"PROXIMO_CONCURSO/{nome}", ficha_prox)
+    texto_est = f"Estimativa de prêmio do próximo concurso {d['p_data']}" if d.get('p_data') else "Estimativa a definir"
+    db_call("PUT", f"PROXIMO_CONCURSO/{nome}", {"texto_data": texto_est, "valor_estimativa": formatar_moeda(d["p_est"])})
 
-    db_call("DELETE", f"ESTATISTICAS/{nome}")
-    time.sleep(2) 
-    
     palpites_novos = motor_ia_profunda(slug, config, pesos_calibrados)
-    
     db_call("PUT", f"ESTATISTICAS/{nome}/jogos_prontos", palpites_novos)
-    pasta_isolada = f"{nome.replace('-', '').capitalize()}_Estatisticas/jogos_prontos"
-    db_call("PUT", pasta_isolada, palpites_novos)
-    
-    print(f"   ✅ Funil Concluído! O seu App de Loterias já pode exibir o sorteio [{c_id}] da {nome}.")
+    db_call("PUT", f"{nome.replace('-', '').capitalize()}_Estatisticas/jogos_prontos", palpites_novos)
+    print(f"   ✅ IA Finalizada!")
 
 # =========================================================================
-# 9. MOTOR CENTRAL DO SERVIDOR
+# 6. GESTOR PRINCIPAL
 # =========================================================================
 def main():
     try:
         agora_br = datetime.now(timezone.utc) - timedelta(hours=3)
-        hora = agora_br.hour
         print(f"=============================================================")
-        print(f"🤖 ROBÔ LOTERIAS IA - {agora_br.strftime('%d/%m/%Y %H:%M')}")
+        print(f"🤖 ROBÔ LOTERIAS (MODO TURBO) - {agora_br.strftime('%d/%m/%Y %H:%M')}")
         print(f"=============================================================")
 
         preparar_infraestrutura_frontend()
 
-        if hora == 9: print("🌅 Repescagem Matinal.")
-
         for slug, config in JOGOS.items():
-            print(f"\n[Iniciando Busca] {config['nome']}...")
-            dados = buscar_dados_loteria(slug)
+            print(f"\n[Processando] {config['nome']}")
+            dados_recentes = buscar_dados_loteria(slug)
             
-            if dados:
-                if banco_esta_incompleto(config["nome"], slug, dados["conc"]):
-                    efeito_domino(slug, config, dados)
+            if dados_recentes:
+                c_id_novo = extrair_id_limpo(dados_recentes["conc"])
+                
+                # 1. Tapa os buracos (MODO TURBO)
+                auditar_e_completar_historico(slug, config, c_id_novo)
+                
+                # 2. Atualiza o de hoje e roda a IA
+                if banco_esta_incompleto(config["nome"], slug, c_id_novo):
+                    efeito_domino(slug, config, dados_recentes)
                 else:
-                    print(f"   ✔️ O Firebase e a Caixa estão iguais (Concurso {dados['conc']}). O Robô descansará até o próximo sorteio.")
+                    print(f"   ✔️ Sorteio atual ({c_id_novo}) 100% íntegro.")
             else:
-                print(f"   🚨 Erro Crítico: Os 5 escudos falharam. A Caixa rejeitou as conexões hoje.")
+                print(f"   🚨 Erro: APIs indisponíveis no momento.")
 
-        print(f"\n🏁 SESSÃO DE IA FINALIZADA.")
-        
+        print(f"\n🏁 SESSÃO DE IA FINALIZADA COM SUCESSO.")
     except Exception as e:
-        print(f"\n🚨 ERRO FATAL: {e}")
+        print(f"\n🚨 ERRO CAPTURADO: {e}")
         traceback.print_exc()
 
 if __name__ == "__main__":
