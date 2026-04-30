@@ -2,35 +2,30 @@ name: Robo Loterias Nuvem Blindada
 
 on:
   schedule:
-    # Cronograma (Horários UTC, ajustados para BRT -3h)
-    - cron: '0 19 * * *'  # 16:00 BRT
-    - cron: '30 0 * * *'  # 21:30 BRT
-    - cron: '0 1 * * *'   # 22:00 BRT
-    - cron: '30 2 * * *'  # 23:30 BRT
-    - cron: '0 12 * * *'  # 09:00 BRT (Repescagem Dia Seguinte)
-  workflow_dispatch:      # Permite rodar manualmente pelo botão
+    # Horários de Brasília (BRT). O GitHub usa o horário de Londres (UTC+0).
+    # Somamos 3 horas para bater exatamente com o Termux:
+    - cron: '0 12 * * *'  # Roda às 09:00 BRT
+    - cron: '0 19 * * *'  # Roda às 16:00 BRT
+    - cron: '0 0 * * *'   # Roda às 21:00 BRT
+    - cron: '0 1 * * *'   # Roda às 22:00 BRT
+    - cron: '0 2 * * *'   # Roda às 23:00 BRT
+  workflow_dispatch:      # Botão mágico para você testar manualmente
 
 jobs:
   executar-processamento:
     runs-on: ubuntu-latest
-    # ESSA LINHA ABAIXO RESOLVE O AVISO DO NODE.JS 20
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       
     steps:
-      - name: Checkout do Código
+      - name: 📥 Puxar o código do repositório
         uses: actions/checkout@v4
         
-      - name: Configurar Python
+      - name: 🐍 Configurar o Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           
-      - name: Instalar Dependências
+      - name: 📦 Instalar Dependências
         run: pip install requests
         
-      - name: Rodar Motor Principal
-        run: python main.py
-        env:
-          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
-          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+      - name: 🚀 Rodar o Robô
+        run: python robo.py
