@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import requests
 import json
 import os
@@ -14,6 +13,7 @@ requests.packages.urllib3.disable_warnings()
 # =========================================================================
 # 1. CONFIGURAÇÕES E CREDENCIAIS
 # =========================================================================
+# O GitHub Actions vai injetar a chave aqui automaticamente, ou usa a padrão
 SECRET_FIREBASE = os.environ.get('FIREBASE_KEY', '7gS8ASjfG5ZGRVu55Yj5QRw58ZzLCMBzWFLOyrfd')
 URL_FIREBASE = "https://canal-da-loterias-default-rtdb.firebaseio.com/"
 
@@ -164,7 +164,6 @@ def motor_ia_profunda(slug, config, pesos):
     inicio = 0 if slug in ["lotomania", "supersete"] else 1
     fim = 99 if slug == "lotomania" else (9 if slug == "supersete" else config.get("total", 60))
     
-    # Iterando agora sobre a "lista_concursos" segura
     for concurso in lista_concursos:
         if isinstance(concurso, dict) and "dezenas" in concurso:
             dzs = [int(x) for x in concurso["dezenas"]]
