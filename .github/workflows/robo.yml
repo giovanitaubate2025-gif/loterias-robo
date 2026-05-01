@@ -2,32 +2,30 @@ name: Robo Loterias Nuvem Blindada
 
 on:
   schedule:
-    # Horários de Brasília (BRT). O GitHub usa o horário de Londres (UTC+0).
-    # Somamos 3 horas para bater exatamente com os horários no Brasil:
-    - cron: '0 12 * * *'  # Roda às 09:00 BRT
-    - cron: '0 19 * * *'  # Roda às 16:00 BRT
-    - cron: '0 0 * * *'   # Roda às 21:00 BRT
-    - cron: '0 1 * * *'   # Roda às 22:00 BRT
-    - cron: '0 2 * * *'   # Roda às 23:00 BRT
-  workflow_dispatch:      # Botão mágico para você testar manualmente na aba Actions
+    - cron: '0 12 * * *'
+    - cron: '0 19 * * *'
+    - cron: '0 0 * * *'
+    - cron: '0 1 * * *'
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
   executar-processamento:
     runs-on: ubuntu-latest
       
     steps:
-      - name: 📥 Puxar o código do repositório
+      - name: Puxar o codigo
         uses: actions/checkout@v4
         
-      - name: 🐍 Configurar o Python
+      - name: Configurar o Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           
-      - name: 📦 Instalar Dependências
+      - name: Instalar Dependencias
         run: pip install requests
         
-      - name: 🚀 Rodar o Robô
+      - name: Rodar o Robo
         env:
           FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
         run: python robo.py
