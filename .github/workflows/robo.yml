@@ -3,13 +3,13 @@ name: Robo Loterias Nuvem Blindada
 on:
   schedule:
     # Horários de Brasília (BRT). O GitHub usa o horário de Londres (UTC+0).
-    # Somamos 3 horas para bater exatamente com o Termux:
+    # Somamos 3 horas para bater exatamente com os horários no Brasil:
     - cron: '0 12 * * *'  # Roda às 09:00 BRT
     - cron: '0 19 * * *'  # Roda às 16:00 BRT
     - cron: '0 0 * * *'   # Roda às 21:00 BRT
     - cron: '0 1 * * *'   # Roda às 22:00 BRT
     - cron: '0 2 * * *'   # Roda às 23:00 BRT
-  workflow_dispatch:      # Botão mágico para você testar manualmente
+  workflow_dispatch:      # Botão mágico para você testar manualmente na aba Actions
 
 jobs:
   executar-processamento:
@@ -28,4 +28,6 @@ jobs:
         run: pip install requests
         
       - name: 🚀 Rodar o Robô
+        env:
+          FIREBASE_KEY: ${{ secrets.FIREBASE_KEY }}
         run: python robo.py
